@@ -9,7 +9,7 @@ compile_commands.json
 .cache/
 
 # Python files
-*.ipynb
+#*.ipynb
 __pycache__
 *ipynb_checkpoints
 

@@ -1,0 +1,83 @@
+[simulation]
+  name = "mi1836-MA40-Lshgyr"                                                    #-------------------------------->
+  engine  = "srpic"
+  runtime = 1500000.0                                                       #-------------------------------->
+
+  [simulation.domain]
+    decomposition = [-1]
+
+[grid]
+  resolution = [240000]                                                    #--------------------------------->
+                        # remember to change cell_width if resolution is changed
+  extent     = [[0.0,24000.0]]  # 10 Cells per skin depth                  #--------------------------------->
+
+  [grid.metric]
+    metric = "minkowski"
+
+  [grid.boundaries]
+    fields = [["MATCH", "MATCH"]]
+    particles = [["ABSORB", "ABSORB"]]
+  
+  [grid.boundaries.match]
+    # ds = 10
+    
+[scales]
+  larmor0    = 1.0
+  skindepth0 = 1.0 # Cell size in c/omg_p
+
+[algorithms]
+  current_filters = 8
+
+  [algorithms.timestep]
+    CFL = 0.99  # normalized by sqrt(dim)
+
+  [algorithms.toggles]
+    fieldsolver = true
+
+[particles]
+  ppc0 = 10.0
+
+  [[particles.species]]
+    label    = "e-"
+    mass     = 1.0
+    charge   = -1.0
+    maxnpart = 8e7
+
+  [[particles.species]]
+    label    = "p+"
+    mass     = 1836.0                #------------------------------------------------------------------------------------------->
+    charge   = 1.0
+    maxnpart = 8e7
+
+[setup]
+  drift_ux    = 0.1            # speed towards the wall [c]
+  temperature = 1.0e-6        # temperature of maxwell distribution [kB T / (m_i c^2)]
+  temperature_ratio = 1.0       # temperature ratio of electrons to protons
+  Bmag = 0.107                 # magnetic field strength as fraction of magnetisation #-------------------------------------->
+  Bmag_lb =0.428                                                                  #-------------------------------------------->
+  Btheta = 90.0                 # magnetic field angle in the plane
+  Bphi = 0.0                    # magnetic field angle out of plane
+  shock_filling_fraction = 0.6  # shock front location in the whole physical space
+  Lsh =1300.0                     # critical length of shock width  #----------------------------------------------------------->
+  nu0 = 2.5e-5                      # scattering freq                #------------------------------------------------------------>
+  injection_start = 0.0         # start time of moving injector
+  injection_frequency = 400     # inject particles every 100 timesteps
+  DEBUG = false
+  average_coeff = 0.0001          # Average coefficient
+
+[output]
+  interval_time = 1000.0
+  format        = "hdf5"
+  
+  [output.fields]
+    quantities = ["N_1", "N_2", "B", "E", "J", "T00_1", "T0i_1", "Tij_1", "T00_2", "T0i_2", "Tij_2"]
+    custom = ["AvgEx", "JptEx","AvgEy","AvgBz"]
+  [output.particles]
+    enable = true
+    stride = 10 
+
+  [output.spectra]
+    enable = false
+
+[checkpoint]
+  interval = 4000
