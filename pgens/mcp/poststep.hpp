@@ -226,7 +226,7 @@ Inline auto boostVel(vector_t u, real_t brel, real_t LFrel) const -> vector_t{
             rotangle = math::sqrt(2. * nu * dtw) * math::sqrt(-2. * math::log(Random<real_t>(generator))) * math::cos(2. * constant::PI * Random<real_t>(generator));
         }
         random_pool.free_state(generator);
-	k[0] = math::sin(theta) * math::cos(phi);
+	    k[0] = math::sin(theta) * math::cos(phi);
         k[1] = math::sin(theta) * math::sin(phi);
         k[2] = math::cos(theta);
 
@@ -241,14 +241,17 @@ Inline auto boostVel(vector_t u, real_t brel, real_t LFrel) const -> vector_t{
 	Kokkos::printf("%.4f  %.4f  %.4f\n", brel, rotangle, ufin[0] - u_weibel);
         }
 
-        // ------------------- reflect beams to avoid being absorbed
-        if ((global_max - x_prtl) / (global_max - global_min) < 0.05){
-	    if (ufin[0] > 0.0)
-               ufin[0] = - drift_ux -ufin[0];
-        }
-        ux1(p) = ufin[0];
-        ux2(p) = ufin[1];
-        ux3(p) = ufin[2];
+    // ------------------- reflect beams to avoid being absorbed ---------------
+    real_t x_wait = global_min + (global_max - global_min) * (1 - 0.05);
+    real_t tau_gyro =
+
+    if (x_prtl > x_wait){
+        if (ufin[0] > 0.0)
+            ufin[0] = -drift_ux - ufin[0];
+    }
+    ux1(p) = ufin[0];
+    ux2(p) = ufin[1];
+    ux3(p) = ufin[2];
         
 
 	return;
