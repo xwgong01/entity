@@ -61,7 +61,7 @@ namespace kernel::mcp {
     const real_t  dt, mp, mi;
     simtime_t time;
     real_t shock_filling_fraction, global_min, global_max, drift_ux, Lsh;
-    real_t nu0, nu_coeff;
+    real_t nu0, nu_coeff,Bmag;
     kernel::weibel::WeibelKernel weibel_kernel;
     bool DEBUG;
     
@@ -84,6 +84,7 @@ namespace kernel::mcp {
                   real_t                         global_max,
                   real_t                         drift_ux,
                   real_t                         Lsh,
+                  real_t                         Bmag,
                   real_t                         nu0,
                   real_t                         nu_coeff,
                   random_number_pool_t          &random_pool,
@@ -104,6 +105,7 @@ namespace kernel::mcp {
       , global_max {global_max}
       , drift_ux {drift_ux}
       , Lsh {Lsh}
+      , Bmag {Bmag}
       , nu0 {nu0}
       , nu_coeff {nu_coeff}
       , random_pool {random_pool}
@@ -180,11 +182,12 @@ Inline auto boostVel(vector_t u, real_t brel, real_t LFrel) const -> vector_t{
         if (tag(p) == ParticleTag::dead){
             return;
         }
-        real_t dtw ;
+        real_t dtw;
         vector_t u, uw, ufin, k;
         real_t u_weibel, duwdx, brel, lfrel;
         real_t theta, phi, rotangle;
         real_t nu, gm, gmw;
+        real_t esc;
 
         // the velocity in lab frame
         u[0] = ux1(p);
@@ -212,15 +215,16 @@ Inline auto boostVel(vector_t u, real_t brel, real_t LFrel) const -> vector_t{
         brel = -math::sqrt(math::pow(u_weibel, 2.)/(1. + math::pow(u_weibel, 2.)));  // relative speed between lab and weibel frame (always negative)
         lfrel = 1.0 / math::sqrt(1 - math::pow(brel, 2.));     // relative Lorentz factor between lab and weibel frame
        
-	dtw = dt * lfrel * (1 - u[0]/gm * brel);     // timestep in weibel frame
+	    dtw = dt * lfrel * (1 - u[0]/gm * brel);     // timestep in weibel frame
 
         uw = boostVel(u, brel, lfrel);
-	gmw = math::sqrt(math::pow(norm(uw),2. ) +1.); // Particle Lorentz factor in Weibel frame
+	    gmw = math::sqrt(math::pow(norm(uw),2. ) +1.); // Particle Lorentz factor in Weibel frame
         
 	// ----------------- scatter --------------
 	// random generate k, rotation angle and normalize:
         auto generator  = random_pool.get_state();
         {
+            esc = Random<real_t>(generator);
             theta = math::acos(2. * Random<real_t>(generator) - 1);
             phi = 2. * constant::PI * Random<real_t>(generator);
             rotangle = math::sqrt(2. * nu * dtw) * math::sqrt(-2. * math::log(Random<real_t>(generator))) * math::cos(2. * constant::PI * Random<real_t>(generator));
@@ -242,13 +246,43 @@ Inline auto boostVel(vector_t u, real_t brel, real_t LFrel) const -> vector_t{
         }
 
     // ------------------- reflect beams to avoid being absorbed ---------------
+
     real_t x_wait = global_min + (global_max - global_min) * (1 - 0.05);
-    real_t tau_gyro =
 
     if (x_prtl > x_wait){
-        if (ufin[0] > 0.0)
-            ufin[0] = -drift_ux - ufin[0];
+        // calculate timescales and probability of escape
+        
+        real_t tau_gyr = Bmag / mp;
+        real_t tau_adv = norm(ufin) / drift_ux;
+        real_t Pesc =  2. / tau_gyr + 3. / 2. / tau_adv;
+
+        if (esc > (1 - Pesc * dt)){ // re-inject particle : bounce back 
+            if (ufin[0] > 0.0)
+                ufin[0] = -drift_ux - ufin[0];
+            // get waiting regoin location
+            if constexpr (D == Dim::_1D) {
+                coord_t<Dim::_1D> x_wait_Cd { ZERO };
+                coord_t<Dim::_1D> x_wait_Ph { ZERO };
+                x_wait_Ph[0] = static_cast<real_t>(x_wait);
+                metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
+                i1(p) = static_cast<int>(x_wait_Cd[0]-1);
+                dx1(p) = x_wait_Cd[0] - static_cast<int>(x_wait_Cd[0]);
+            }
+        }
+        else{ // keep prtl in the waiting region
+            // get waiting regoin location
+            if constexpr (D == Dim::_1D) {
+                coord_t<Dim::_1D> x_wait_Cd { ZERO };
+                coord_t<Dim::_1D> x_wait_Ph { ZERO };
+                x_wait_Ph[0] = static_cast<real_t>(x_wait/2 + global_max / 2);
+                metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
+                i1(p) = static_cast<int>(x_wait_Cd[0]);
+                dx1(p) = x_wait_Cd[0] - static_cast<int>(x_wait_Cd[0]);
+            }
+        }
+
     }
+
     ux1(p) = ufin[0];
     ux2(p) = ufin[1];
     ux3(p) = ufin[2];

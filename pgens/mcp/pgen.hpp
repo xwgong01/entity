@@ -256,10 +256,11 @@ namespace user {
                  global_xmax,
                  drift_ux,
                  Lsh,
+                 Bmag,
                  nu0,
                  nu_coeff,
                  domain.random_pool, 
-	         PRINT
+                 PRINT
                  ));
          }
 
