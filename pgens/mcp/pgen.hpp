@@ -5,6 +5,7 @@
 #include "global.h"
 
 #include "arch/traits.h"
+#include "arch/kokkos_aliases.h"
 #include "utils/error.h"
 #include "utils/numeric.h"
 
@@ -237,9 +238,9 @@ namespace user {
       // check if the injector should be active
       bool PRINT=false;
       if (DEBUG){
-          if (step % injection_frequency == 0) {
+          //if (step % injection_frequency == 0) {
             PRINT=true;
-          }
+          //}
       }
       
       // Apply stochastic scattering 
@@ -263,6 +264,8 @@ namespace user {
                  PRINT
                  ));
          }
+
+
 
 
       // compute the mean electric field Ex
@@ -319,12 +322,6 @@ namespace user {
         }
         if constexpr (D == Dim::_3D) {
         }      
-      
-
-      // check if the injector should be active
-      if (step % injection_frequency != 0) {
-        return;
-      }
 
 
       auto xmax = global_xmax - (global_xmax - global_xmin) * 0.01;
@@ -333,7 +330,44 @@ namespace user {
       if (xmin <= global_xmin) {
           xmin = global_xmin;
       }
-                                                                                                    
+
+      {// Reset fields for the 0d leaky box
+
+      // define indice range to reset fields
+      boundaries_t<bool> incl_ghosts_wait;
+      for (auto d = 0; d < M::Dim; ++d) {
+        incl_ghosts_wait.push_back({ false, false });
+      }
+
+      // define box to reset fields
+      boundaries_t<real_t> purge_box_wait;
+      // loop over all dimension
+      for (auto d = 0u; d < M::Dim; ++d) {
+        if (d == 0) {
+          purge_box_wait.push_back({ xmax, global_xmax });
+        } else {
+          purge_box_wait.push_back(Range::All);
+        }
+      }
+
+      const auto extent_wait = domain.mesh.ExtentToRange(purge_box_wait, incl_ghosts_wait);
+      tuple_t<std::size_t, M::Dim> x_wait_min { 0 }, x_wait_max { 0 };
+      for (auto d = 0; d < M::Dim; ++d) {
+        x_wait_min[d] = extent_wait[d].first;
+        x_wait_max[d] = extent_wait[d].second;
+      }
+
+      Kokkos::parallel_for("ResetFields",
+                           CreateRangePolicy<M::Dim>(x_wait_min, x_wait_max),
+                           arch::SetEMFields_kernel<decltype(init_flds), S, M> {
+                             domain.fields.em,
+                             init_flds,
+                             domain.mesh.metric });
+      }
+      // check if the injector should be active
+      if (step % injection_frequency != 0) {
+        return;
+      }                                                                        
 
       // define indice range to reset fields
       boundaries_t<bool> incl_ghosts;
@@ -358,14 +392,6 @@ namespace user {
         x_min[d] = extent[d].first;
         x_max[d] = extent[d].second;
       }
-
-      /*Kokkos::parallel_for("ResetFields",
-                           CreateRangePolicy<M::Dim>(x_min, x_max),
-                           arch::SetEMFields_kernel<decltype(init_flds), S, M> {
-                             domain.fields.em,
-                             init_flds,
-                             domain.mesh.metric });
-      */
 
       /*
           Inject slab of fresh plasma

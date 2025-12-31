@@ -240,23 +240,27 @@ Inline auto boostVel(vector_t u, real_t brel, real_t LFrel) const -> vector_t{
 	// ------------------- final velocity -----------------
         ufin = boostVel(uw, -brel, lfrel);
 
-        // ------------------- print diagnostic, default false -----------------
-	if (DEBUG){
-	Kokkos::printf("%.4f  %.4f  %.4f\n", brel, rotangle, ufin[0] - u_weibel);
-        }
+        
 
     // ------------------- reflect beams to avoid being absorbed ---------------
 
-    real_t x_wait = global_min + (global_max - global_min) * (1 - 0.05);
+    real_t x_wait = global_min + (global_max - global_min) * (1 - 0.01);
+
 
     if (x_prtl > x_wait){
-        // calculate timescales and probability of escape
-        
-        real_t tau_gyr = Bmag / mp;
-        real_t tau_adv = norm(ufin) / drift_ux;
-        real_t Pesc =  2. / tau_gyr + 3. / 2. / tau_adv;
 
-        if (esc > (1 - Pesc * dt)){ // re-inject particle : bounce back 
+        real_t tau_gyr = mp/(Bmag+1.0e-20);
+        real_t tau_adv = math::sqrt((ufin[0] + drift_ux)*(ufin[0] - drift_ux) + ufin[1]*ufin[1] + ufin[2]*ufin[2]  ) / drift_ux / nu;
+        real_t tau_eff = 1.0 / (2. / tau_gyr + 3. / 2. / tau_adv);// the effective timescale is sqrt(tau1 * tau2)
+        real_t Pesc = 1.0  - math::exp( - dt / tau_eff);
+
+        // ------------------- print diagnostic, default false -----------------
+        if (DEBUG){
+        // Kokkos::printf("%.4f  %.4f  %.4f\n", brel, rotangle, ufin[0] - u_weibel);
+            Kokkos::printf("%.4f %.4f %.4f %.4f %.4f %lf\n", x_prtl, x_wait, esc, tau_gyr, tau_adv, Pesc);
+        }
+        // calculate timescales and probability of escape
+        if (esc > (1.0 - Pesc)){ // re-inject particle : bounce back 
             if (ufin[0] > 0.0)
                 ufin[0] = -drift_ux - ufin[0];
             // get waiting regoin location
@@ -270,7 +274,7 @@ Inline auto boostVel(vector_t u, real_t brel, real_t LFrel) const -> vector_t{
             }
         }
         else{ // keep prtl in the waiting region
-            // get waiting regoin location
+            // get waiting region location
             if constexpr (D == Dim::_1D) {
                 coord_t<Dim::_1D> x_wait_Cd { ZERO };
                 coord_t<Dim::_1D> x_wait_Ph { ZERO };
@@ -280,7 +284,6 @@ Inline auto boostVel(vector_t u, real_t brel, real_t LFrel) const -> vector_t{
                 dx1(p) = x_wait_Cd[0] - static_cast<int>(x_wait_Cd[0]);
             }
         }
-
     }
 
     ux1(p) = ufin[0];
