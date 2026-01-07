@@ -261,8 +261,8 @@ Inline auto boostVel(vector_t u, real_t brel, real_t LFrel) const -> vector_t{
         }
         // calculate timescales and probability of escape
         if (esc > (1.0 - Pesc)){ // re-inject particle : bounce back 
-            if (ufin[0] > 0.0)
-                ufin[0] = -drift_ux - ufin[0];
+            if (ufin[0] > 0)
+                ufin[0] = -2.0*drift_ux - ufin[0];
             // get waiting regoin location
             if constexpr (D == Dim::_1D) {
                 coord_t<Dim::_1D> x_wait_Cd { ZERO };
