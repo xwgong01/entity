@@ -28,13 +28,6 @@
   #include "arch/mpi_tags.h"
 #endif
 
-namespace user_plds{
-    enum {
-      pldi = 2,
-      pldr = 0
-      };
-}
-
 /* -------------------------------------------------------------------------- */
 /* Local macros                                                               */
 /* -------------------------------------------------------------------------- */
@@ -63,17 +56,13 @@ namespace kernel::mcp {
     array_t<int*>                 i1;
     array_t<prtldx_t*>            dx1;
     array_t<real_t*>              ux1, ux2, ux3;
-    array_t<real_t**>             pld_r;
-    array_t<npart_t**>            pld_i;
     array_t<short*>               tag;
-    npart_t                       prtl_to_inject;
     random_number_pool_t          random_pool;
     const real_t  dt, mp, mi;
     simtime_t time;
     real_t shock_filling_fraction, global_min, global_max, drift_ux, Lsh;
     real_t nu0, nu_coeff,Bmag;
     kernel::weibel::WeibelKernel weibel_kernel;
-    const real_t x_wait;
     bool DEBUG;
     
   public:
@@ -84,13 +73,12 @@ namespace kernel::mcp {
                   array_t<real_t*>&              ux1,
                   array_t<real_t*>&              ux2,
                   array_t<real_t*>&              ux3,
-                  array_t<real_t**>&             pld_r,
-                  array_t<npart_t**>&            pld_i,
                   array_t<short*>&               tag,
                   real_t                         mp,
                   real_t                         mi,
                   simtime_t                      time,
                   real_t                         dt,
+		//real_t                         cell_width,
                   real_t                         shock_filling_fraction,
                   real_t                         global_min,
                   real_t                         global_max,
@@ -99,8 +87,6 @@ namespace kernel::mcp {
                   real_t                         Bmag,
                   real_t                         nu0,
                   real_t                         nu_coeff,
-                  real_t                         x_wait,
-                  npart_t&                       prtl_to_inject,
                   random_number_pool_t          &random_pool,
                   bool                           DEBUG): 
       metric {metric}
@@ -121,9 +107,7 @@ namespace kernel::mcp {
       , Lsh {Lsh}
       , Bmag {Bmag}
       , nu0 {nu0}
-      , x_wait {x_wait}
-      , nu_coeff {nu_coeff},
-      , prtl_to_inject {prtl_to_inject}
+      , nu_coeff {nu_coeff}
       , random_pool {random_pool}
       , DEBUG {DEBUG} {
           weibel_kernel = kernel::weibel::WeibelKernel(shock_filling_fraction, global_min, global_max, drift_ux, Lsh);
@@ -203,7 +187,7 @@ Inline auto boostVel(vector_t u, real_t brel, real_t LFrel) const -> vector_t{
         real_t u_weibel, duwdx, brel, lfrel;
         real_t theta, phi, rotangle;
         real_t nu, gm, gmw;
-        // real_t esc;
+        real_t esc;
 
         // the velocity in lab frame
         u[0] = ux1(p);
@@ -240,7 +224,7 @@ Inline auto boostVel(vector_t u, real_t brel, real_t LFrel) const -> vector_t{
 	// random generate k, rotation angle and normalize:
         auto generator  = random_pool.get_state();
         {
-            // esc = Random<real_t>(generator);
+            esc = Random<real_t>(generator);
             theta = math::acos(2. * Random<real_t>(generator) - 1);
             phi = 2. * constant::PI * Random<real_t>(generator);
             rotangle = math::sqrt(2. * nu * dtw) * math::sqrt(-2. * math::log(Random<real_t>(generator))) * math::cos(2. * constant::PI * Random<real_t>(generator));
@@ -260,27 +244,37 @@ Inline auto boostVel(vector_t u, real_t brel, real_t LFrel) const -> vector_t{
 
     // ------------------- reflect beams to avoid being absorbed ---------------
 
-    // real_t x_wait = global_min + (global_max - global_min) * (1 - 0.01);
+    real_t x_wait = global_min + (global_max - global_min) * (1 - 0.01);
 
-    if (x_prtl <= x_wait){
-        pld_i(p, user_plds::pldi) = 0; // reset the tag whether prtl is inside the isolaed box
-    }
-    else { // prtl enters the isolated box
-        if (pld_i(p, user_plds::pldi) == 0) // if it is still active (enters the box for the first time)
-        {
-            pld_r(p,user_plds::pldr) = x_prtl - x_wait; // the real position relative to x_wait.
-            pld_i(p,user_plds::pldi) = 1; // mark prtl as in the isolated box
 
-            // for particle entering box for first time, initialize. 
-            //TODO(xgong): Inject a thermal particle 
-            Kokkos::atomic_add(&prtl_to_inject, 1);
+    if (x_prtl > x_wait){
+
+        real_t tau_gyr = mp/(Bmag+1.0e-20);
+        real_t tau_adv = math::sqrt((ufin[0] + drift_ux)*(ufin[0] - drift_ux) + ufin[1]*ufin[1] + ufin[2]*ufin[2]  ) / drift_ux / nu;
+        real_t tau_eff = 1.0 / (2. / tau_gyr + 3. / 2. / tau_adv);// the effective timescale is sqrt(tau1 * tau2)
+        real_t Pesc = 1.0  - math::exp( - dt / tau_eff);
+
+        // ------------------- print diagnostic, default false -----------------
+        if (DEBUG){
+        // Kokkos::printf("%.4f  %.4f  %.4f\n", brel, rotangle, ufin[0] - u_weibel);
+            Kokkos::printf("%.4f %.4f %.4f %.4f %.4f %lf\n", x_prtl, x_wait, esc, tau_gyr, tau_adv, Pesc);
         }
-        else{
-            pld_r(p,user_plds::pldr) += x_prtl - (x_wait + global_max)/2.0;
+        // calculate timescales and probability of escape
+        if (esc > (1.0 - Pesc)){ // re-inject particle : bounce back 
+            if (ufin[0] > 0)
+                ufin[0] = -2.0*drift_ux - ufin[0];
+            // get waiting regoin location
+            if constexpr (D == Dim::_1D) {
+                coord_t<Dim::_1D> x_wait_Cd { ZERO };
+                coord_t<Dim::_1D> x_wait_Ph { ZERO };
+                x_wait_Ph[0] = static_cast<real_t>(x_wait);
+                metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
+                i1(p) = static_cast<int>(x_wait_Cd[0]-1);
+                dx1(p) = x_wait_Cd[0] - static_cast<int>(x_wait_Cd[0]);
+            }
         }
-
-        if  (pld_r(p, user_plds::pldr) > 0){ // prtl still outside the main simulation
-            //drag prtl back to a safe place
+        else{ // keep prtl in the waiting region
+            // get waiting region location
             if constexpr (D == Dim::_1D) {
                 coord_t<Dim::_1D> x_wait_Cd { ZERO };
                 coord_t<Dim::_1D> x_wait_Ph { ZERO };
@@ -289,20 +283,6 @@ Inline auto boostVel(vector_t u, real_t brel, real_t LFrel) const -> vector_t{
                 i1(p) = static_cast<int>(x_wait_Cd[0]);
                 dx1(p) = x_wait_Cd[0] - static_cast<int>(x_wait_Cd[0]);
             }
-
-        }
-        else { //  prtl leave the isolated box and return to the main simulation
-            pld_i(p,user_plds::pldi) = 0; //  mark prtl as back
-            //TODO(xgong): Inject a thermal particle
-            Kokkos::atomic_add(&prtl_to_inject, -1);
-
-        }
-
-
-        // ------------------- print diagnostic, default false -----------------
-        if (DEBUG){
-        // Kokkos::printf("%.4f  %.4f  %.4f\n", brel, rotangle, ufin[0] - u_weibel);
-            // Kokkos::printf("%.4f %.4f %.4f %.4f %.4f %lf\n", x_prtl, x_wait, esc, tau_gyr, tau_adv, Pesc);
         }
     }
 

@@ -17,9 +17,12 @@
 #include "framework/domain/metadomain.h"
 #include <Kokkos_Random.hpp>
 #include "poststep.hpp"
+#include "inject_single_prtls.hpp"
 
 #include <algorithm>
 #include <utility>
+
+
 
 namespace user {
   using namespace ntt;
@@ -130,8 +133,9 @@ namespace user {
     array_t<real_t*> cbuff, cbuff2, cbuff3;
     const int                        random_seed;
     random_number_pool_t             random_pool;
-    bool DEBUG;
+    const bool DEBUG;
     bool is_resuming=false;
+    const real_t x_wait, wait_offset;
 
 
 
@@ -139,6 +143,8 @@ namespace user {
       : arch::ProblemGenerator<S, M> { p }
       , global_xmin { global_domain.mesh().extent(in::x1).first }
       , global_xmax { global_domain.mesh().extent(in::x1).second }
+      , wait_offset {p.template get<real_t>("setup.wait_offset") , 5.0}
+      , x_wait {global_xmax - wait_offset}
       , drift_ux { p.template get<real_t>("setup.drift_ux") } // the magnitude of upstream drift velocity
       , temperature { p.template get<real_t>("setup.temperature") } 
       , temperature_ratio { p.template get<real_t>("setup.temperature_ratio") }
@@ -242,6 +248,8 @@ namespace user {
             PRINT=true;
           //}
       }
+
+      npart_t prtl_to_inject=ZERO;
       
       // Apply stochastic scattering 
       for (auto& species : domain.species) {
@@ -250,7 +258,7 @@ namespace user {
              species.rangeActiveParticles(),
              kernel::mcp::UpdateVelKernel<M, D>(
                  domain.mesh.metric,
-                 species.i1, species.dx1, species.ux1, species.ux2, species.ux3,
+                 species.i1, species.dx1, species.ux1, species.ux2, species.ux3, species.pld_r, species.pld_i,
                  species.tag, species.mass(), domain.species[1].mass(), time, dt,  //domain.mesh.metric,
                  shock_filling_fraction,
                  global_xmin,
@@ -259,7 +267,9 @@ namespace user {
                  Lsh,
                  Bmag,
                  nu0,
+                 x_wait,
                  nu_coeff,
+                 prtl_to_inject,
                  domain.random_pool, 
                  PRINT
                  ));
@@ -422,7 +432,46 @@ namespace user {
                                            drifts,
                                            false,
                                            inj_box);
+      
+      // TODO(xgong): inject thermal particles with charge of 
+      const auto maxwellian_1 = arch::Maxwellian<S, M>(domain.mesh.metric,
+                                                     domain.random_pool,
+                                                     temperature,
+                                                     drifts.first);
+      const auto maxwellian_2 = arch::Maxwellian<S, M>(domain.mesh.metric,
+                                                     domain.random_pool,
+                                                     temperature * temperature_ratio,
+                                                     drifts.second);
 
+      
+
+      if (prtl_to_inject > 0){
+        // inject ions
+        auto species = domain.species[1];
+        coord_t<Dim::_1D> x_wait_Cd {ZERO};
+        coord_t<Dim::_1D> x_wait_Ph {ZERO};
+        x_wait_Ph = static_cast<real_t> x_wait;
+        metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
+
+        Kokkos::parallel_for("Inject",
+                          prtl_to_inject,
+                          kernel::injector::InjectSinglePrtls_kernel<M, decltype(maxwellian_2)>(
+                              species,
+                              maxwellian_2,
+                              x_wait_Cd
+                              ));
+      }
+      else if (prtl_to_inject < 0){
+        // inject electrons
+        auto species = domain.species[0];
+        Kokkos::parallel_for("Inject",
+                          prtl_to_inject,
+                          kernel::injector::InjectSinglePrtls_kernel<M, decltype(maxwellian_1)>(
+                              species,
+                              maxwellian_1,
+                              x_wait_Cd
+                              ));
+      }
     }
   };
 } // namespace user
