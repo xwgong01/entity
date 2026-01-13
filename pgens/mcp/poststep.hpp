@@ -66,7 +66,7 @@ namespace kernel::mcp {
     array_t<real_t**>             pld_r;
     array_t<npart_t**>            pld_i;
     array_t<short*>               tag;
-    npart_t                       prtl_to_inject;
+    array_t<int>                  prtl_to_inject;
     random_number_pool_t          random_pool;
     const real_t  dt, mp, mi;
     simtime_t time;
@@ -100,7 +100,7 @@ namespace kernel::mcp {
                   real_t                         nu0,
                   real_t                         nu_coeff,
                   real_t                         x_wait,
-                  npart_t&                       prtl_to_inject,
+                  array_t<int>                   &prtl_to_inject,
                   random_number_pool_t          &random_pool,
                   bool                           DEBUG): 
       metric {metric}
@@ -122,7 +122,7 @@ namespace kernel::mcp {
       , Bmag {Bmag}
       , nu0 {nu0}
       , x_wait {x_wait}
-      , nu_coeff {nu_coeff},
+      , nu_coeff {nu_coeff}
       , prtl_to_inject {prtl_to_inject}
       , random_pool {random_pool}
       , DEBUG {DEBUG} {
@@ -193,8 +193,8 @@ Inline auto boostVel(vector_t u, real_t brel, real_t LFrel) const -> vector_t{
     }
 
   
-    // Manipulate particle velocity 
-    Inline void operator()(index_t p) const {
+// Manipulate particle velocity 
+Inline void operator()(index_t p) const {
         if (tag(p) == ParticleTag::dead){
             return;
         }
@@ -273,7 +273,7 @@ Inline auto boostVel(vector_t u, real_t brel, real_t LFrel) const -> vector_t{
 
             // for particle entering box for first time, initialize. 
             //TODO(xgong): Inject a thermal particle 
-            Kokkos::atomic_add(&prtl_to_inject, 1);
+            Kokkos::atomic_inc(&prtl_to_inject());
         }
         else{
             pld_r(p,user_plds::pldr) += x_prtl - (x_wait + global_max)/2.0;
@@ -294,7 +294,7 @@ Inline auto boostVel(vector_t u, real_t brel, real_t LFrel) const -> vector_t{
         else { //  prtl leave the isolated box and return to the main simulation
             pld_i(p,user_plds::pldi) = 0; //  mark prtl as back
             //TODO(xgong): Inject a thermal particle
-            Kokkos::atomic_add(&prtl_to_inject, -1);
+            Kokkos::atomic_dec(&prtl_to_inject());
 
         }
 

@@ -143,7 +143,7 @@ namespace user {
       : arch::ProblemGenerator<S, M> { p }
       , global_xmin { global_domain.mesh().extent(in::x1).first }
       , global_xmax { global_domain.mesh().extent(in::x1).second }
-      , wait_offset {p.template get<real_t>("setup.wait_offset") , 5.0}
+      , wait_offset {p.template get<real_t>("setup.wait_offset", 5.0)}
       , x_wait {global_xmax - wait_offset}
       , drift_ux { p.template get<real_t>("setup.drift_ux") } // the magnitude of upstream drift velocity
       , temperature { p.template get<real_t>("setup.temperature") } 
@@ -249,7 +249,8 @@ namespace user {
           //}
       }
 
-      npart_t prtl_to_inject=ZERO;
+      array_t<int> prtl_to_inject("Number of prtls to inject to keep charge neutral");
+      prtl_to_inject() = ZERO;
       
       // Apply stochastic scattering 
       for (auto& species : domain.species) {
@@ -434,43 +435,50 @@ namespace user {
                                            inj_box);
       
       // TODO(xgong): inject thermal particles with charge of 
-      const auto maxwellian_1 = arch::Maxwellian<S, M>(domain.mesh.metric,
+      if constexpr (M::Dim == Dim::_1D){
+        const auto maxwellian_1 = arch::Maxwellian<S, M>(domain.mesh.metric,
                                                      domain.random_pool,
                                                      temperature,
                                                      drifts.first);
-      const auto maxwellian_2 = arch::Maxwellian<S, M>(domain.mesh.metric,
+        const auto maxwellian_2 = arch::Maxwellian<S, M>(domain.mesh.metric,
                                                      domain.random_pool,
                                                      temperature * temperature_ratio,
                                                      drifts.second);
-
       
 
-      if (prtl_to_inject > 0){
-        // inject ions
-        auto species = domain.species[1];
-        coord_t<Dim::_1D> x_wait_Cd {ZERO};
-        coord_t<Dim::_1D> x_wait_Ph {ZERO};
-        x_wait_Ph = static_cast<real_t> x_wait;
-        metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
+        if (prtl_to_inject() > 0){
+          // inject ions
+          auto& species = domain.species[1];
+          coord_t<Dim::_1D> x_wait_Cd {ZERO};
+          coord_t<Dim::_1D> x_wait_Ph {ZERO};
+          x_wait_Ph[0] = static_cast<real_t>(x_wait);
+          
+          domain.mesh.metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
+          
+          Kokkos::parallel_for("Inject_ions",
+                            prtl_to_inject(),
+                            kernel::injector::InjectSinglePrtls_kernel<M, decltype(maxwellian_2)>(
+                                species,
+                                maxwellian_2,
+                                x_wait_Cd
+                                ));
+        }
+        else if (prtl_to_inject() < 0){
+          // inject electrons
+          auto& species = domain.species[0];
+          coord_t<Dim::_1D> x_wait_Cd {ZERO};
+          coord_t<Dim::_1D> x_wait_Ph {ZERO};
+          x_wait_Ph[0] = static_cast<real_t>(x_wait);
+          domain.mesh.metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
 
-        Kokkos::parallel_for("Inject",
-                          prtl_to_inject,
-                          kernel::injector::InjectSinglePrtls_kernel<M, decltype(maxwellian_2)>(
-                              species,
-                              maxwellian_2,
-                              x_wait_Cd
-                              ));
-      }
-      else if (prtl_to_inject < 0){
-        // inject electrons
-        auto species = domain.species[0];
-        Kokkos::parallel_for("Inject",
-                          prtl_to_inject,
-                          kernel::injector::InjectSinglePrtls_kernel<M, decltype(maxwellian_1)>(
-                              species,
-                              maxwellian_1,
-                              x_wait_Cd
-                              ));
+          Kokkos::parallel_for("Inject_electrons",
+                            prtl_to_inject(),
+                            kernel::injector::InjectSinglePrtls_kernel<M, decltype(maxwellian_1)>(
+                                species,
+                                maxwellian_1,
+                                x_wait_Cd
+                                ));
+        }
       }
     }
   };
