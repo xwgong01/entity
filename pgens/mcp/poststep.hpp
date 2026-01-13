@@ -100,7 +100,7 @@ namespace kernel::mcp {
                   real_t                         nu0,
                   real_t                         nu_coeff,
                   real_t                         x_wait,
-                  array_t<int>                   &prtl_to_inject,
+                  array_t<int>                   prtl_to_inject,
                   random_number_pool_t          &random_pool,
                   bool                           DEBUG): 
       metric {metric}

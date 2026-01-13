@@ -249,8 +249,12 @@ namespace user {
           //}
       }
 
-      array_t<int> prtl_to_inject("Number of prtls to inject to keep charge neutral");
-      prtl_to_inject() = ZERO;
+      array_t<int> prtl_to_inject("Number of prtls to inject");
+      // array_h_t<int> prtl_to_inject_h("Number of prtls to inject (on device)");
+      // prtl_to_inject_h() = static_cast<int>(ZERO);
+      // prtl_to_inject() = static_cast<int>(ZERO);
+      Kokkos::deep_copy(prtl_to_inject, ZERO);
+
       
       // Apply stochastic scattering 
       for (auto& species : domain.species) {
@@ -275,7 +279,8 @@ namespace user {
                  PRINT
                  ));
          }
-
+         
+      // Kokkos::deep_copy(prtl_to_inject_h, prtl_to_inject);
 
 
 
