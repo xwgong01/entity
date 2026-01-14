@@ -135,7 +135,7 @@ namespace user {
     random_number_pool_t             random_pool;
     const bool DEBUG;
     bool is_resuming=false;
-    const real_t x_wait, wait_offset;
+    real_t x_wait, wait_offset;
 
 
 
@@ -144,7 +144,6 @@ namespace user {
       , global_xmin { global_domain.mesh().extent(in::x1).first }
       , global_xmax { global_domain.mesh().extent(in::x1).second }
       , wait_offset {p.template get<real_t>("setup.wait_offset", 5.0)}
-      , x_wait {global_xmax - wait_offset}
       , drift_ux { p.template get<real_t>("setup.drift_ux") } // the magnitude of upstream drift velocity
       , temperature { p.template get<real_t>("setup.temperature") } 
       , temperature_ratio { p.template get<real_t>("setup.temperature_ratio") }
@@ -250,11 +249,12 @@ namespace user {
       }
 
       array_t<int> prtl_to_inject("Number of prtls to inject");
-      // array_h_t<int> prtl_to_inject_h("Number of prtls to inject (on device)");
+      array_h_t<int> prtl_to_inject_h("Number of prtls to inject (on device)");
       // prtl_to_inject_h() = static_cast<int>(ZERO);
       // prtl_to_inject() = static_cast<int>(ZERO);
       Kokkos::deep_copy(prtl_to_inject, ZERO);
 
+      x_wait = global_xmax - wait_offset;
       
       // Apply stochastic scattering 
       for (auto& species : domain.species) {
@@ -279,8 +279,9 @@ namespace user {
                  PRINT
                  ));
          }
-         
-      // Kokkos::deep_copy(prtl_to_inject_h, prtl_to_inject);
+      
+      // deep copy the calculated number of prtls to host
+      Kokkos::deep_copy(prtl_to_inject_h, prtl_to_inject);
 
 
 
@@ -339,8 +340,8 @@ namespace user {
         if constexpr (D == Dim::_3D) {
         }      
 
-
-      auto xmax = global_xmax - (global_xmax - global_xmin) * 0.01;
+      
+      auto xmax = x_wait;
       // compute the beginning of the injected region
       auto xmin = xmax - injection_frequency * dt * drift_ux / math::sqrt(drift_ux * drift_ux + ONE);//* (injector_velocity + drift_ux); 
       if (xmin <= global_xmin) {
@@ -348,7 +349,6 @@ namespace user {
       }
 
       {// Reset fields for the 0d leaky box
-
       // define indice range to reset fields
       boundaries_t<bool> incl_ghosts_wait;
       for (auto d = 0; d < M::Dim; ++d) {
@@ -380,34 +380,106 @@ namespace user {
                              init_flds,
                              domain.mesh.metric });
       }
+
+
+      // same maxwell distribution as above
+      const auto temperatures = std::make_pair(temperature,
+                                              temperature_ratio * temperature);
+      const auto drifts       = std::make_pair(
+        std::vector<real_t> { -drift_ux, ZERO, ZERO },
+        std::vector<real_t> { -drift_ux, ZERO, ZERO });
+      // Inject Prtls to keep charge neutral
+      if constexpr (M::Dim == Dim::_1D){
+        
+        const auto maxwellian_1 = arch::Maxwellian<S, M>(domain.mesh.metric,
+                                                     domain.random_pool,
+                                                     temperature,
+                                                     drifts.first);
+        const auto maxwellian_2 = arch::Maxwellian<S, M>(domain.mesh.metric,
+                                                     domain.random_pool,
+                                                     temperature * temperature_ratio,
+                                                     drifts.second);
+      
+        if (PRINT){
+          Kokkos::printf("Finished maxwellian def\n");
+          Kokkos::printf("prtl to inject: %d\n", prtl_to_inject_h());
+          Kokkos::printf("xmax and xwait: %.2lf %.2lf\n", global_xmax, x_wait);
+          Kokkos::printf("xmin and xmax: %.2lf %.2lf\n", xmin, xmax);
+          Kokkos::printf("npldi : %d npldr: %d\n", domain.species[0].npld_i(),domain.species[0].npld_r());
+          Kokkos::printf("npldi : %d npldr: %d\n", domain.species[1].npld_i(),domain.species[1].npld_r());
+        }
+
+        if (prtl_to_inject_h() > 0){
+          // inject ions
+          auto& species = domain.species[1];
+          coord_t<Dim::_1D> x_wait_Cd {ZERO};
+          coord_t<Dim::_1D> x_wait_Ph {ZERO};
+          x_wait_Ph[0] = static_cast<real_t>(x_wait);
+          
+          domain.mesh.metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
+          
+          Kokkos::parallel_for("Inject_ions",
+                            prtl_to_inject_h(),
+                            kernel::injector::InjectSinglePrtls_kernel<M, decltype(maxwellian_2)>(
+                                species,
+                                maxwellian_2,
+                               x_wait_Cd
+                                ));
+          species.set_npart(species.npart() + prtl_to_inject_h());
+        }
+        else if (prtl_to_inject_h() < 0){
+          // inject electrons
+          auto& species = domain.species[0];
+          coord_t<Dim::_1D> x_wait_Cd {ZERO};
+          coord_t<Dim::_1D> x_wait_Ph {ZERO};
+          x_wait_Ph[0] = static_cast<real_t>(x_wait);
+          domain.mesh.metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
+
+          Kokkos::parallel_for("Inject_electrons",
+                            prtl_to_inject_h(),
+                            kernel::injector::InjectSinglePrtls_kernel<M, decltype(maxwellian_1)>(
+                                species,
+                                maxwellian_1,
+                                x_wait_Cd
+                                ));
+          species.set_npart(species.npart() - prtl_to_inject_h());
+        }
+        
+        if (PRINT){
+          Kokkos::printf("Finished first pgen loop\n");
+        }
+
+
+      } // if constexpr dim 1d
+
       // check if the injector should be active
       if (step % injection_frequency != 0) {
         return;
       }                                                                        
 
       // define indice range to reset fields
-      boundaries_t<bool> incl_ghosts;
-      for (auto d = 0; d < M::Dim; ++d) {
-        incl_ghosts.push_back({ false, false });
-      }
+      // boundaries_t<bool> incl_ghosts;
+      // for (auto d = 0; d < M::Dim; ++d) {
+      //   incl_ghosts.push_back({ false, false });
+      // }
 
-      // define box to reset fields
-      boundaries_t<real_t> purge_box;
-      // loop over all dimension
-      for (auto d = 0u; d < M::Dim; ++d) {
-        if (d == 0) {
-          purge_box.push_back({ xmin, global_xmax });
-        } else {
-          purge_box.push_back(Range::All);
-        }
-      }
+      // // define box to reset fields
+      // boundaries_t<real_t> purge_box;
+      // // loop over all dimension
+      // for (auto d = 0u; d < M::Dim; ++d) {
+      //   if (d == 0) {
+      //     purge_box.push_back({ xmin, global_xmax });
+      //   } else {
+      //     purge_box.push_back(Range::All);
+      //   }
+      // }
 
-      const auto extent = domain.mesh.ExtentToRange(purge_box, incl_ghosts);
-      tuple_t<std::size_t, M::Dim> x_min { 0 }, x_max { 0 };
-      for (auto d = 0; d < M::Dim; ++d) {
-        x_min[d] = extent[d].first;
-        x_max[d] = extent[d].second;
-      }
+      // const auto extent = domain.mesh.ExtentToRange(purge_box, incl_ghosts);
+      // tuple_t<std::size_t, M::Dim> x_min { 0 }, x_max { 0 };
+      // for (auto d = 0; d < M::Dim; ++d) {
+      //   x_min[d] = extent[d].first;
+      //   x_max[d] = extent[d].second;
+      // }
 
       /*
           Inject slab of fresh plasma
@@ -424,13 +496,8 @@ namespace user {
         }
       }
 
-      // same maxwell distribution as above
-      const auto temperatures = std::make_pair(temperature,
-                                               temperature_ratio * temperature);
-      const auto drifts       = std::make_pair(
-        std::vector<real_t> { -drift_ux, ZERO, ZERO },
-        std::vector<real_t> { -drift_ux, ZERO, ZERO });
-      arch::InjectUniformMaxwellians<S, M>(params,
+      if constexpr (M::Dim == Dim::_1D){
+        arch::InjectUniformMaxwellians<S, M>(params,
                                            domain,
                                            ONE,
                                            temperatures,
@@ -438,54 +505,11 @@ namespace user {
                                            drifts,
                                            false,
                                            inj_box);
-      
-      // TODO(xgong): inject thermal particles with charge of 
-      if constexpr (M::Dim == Dim::_1D){
-        const auto maxwellian_1 = arch::Maxwellian<S, M>(domain.mesh.metric,
-                                                     domain.random_pool,
-                                                     temperature,
-                                                     drifts.first);
-        const auto maxwellian_2 = arch::Maxwellian<S, M>(domain.mesh.metric,
-                                                     domain.random_pool,
-                                                     temperature * temperature_ratio,
-                                                     drifts.second);
-      
-
-        if (prtl_to_inject() > 0){
-          // inject ions
-          auto& species = domain.species[1];
-          coord_t<Dim::_1D> x_wait_Cd {ZERO};
-          coord_t<Dim::_1D> x_wait_Ph {ZERO};
-          x_wait_Ph[0] = static_cast<real_t>(x_wait);
-          
-          domain.mesh.metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
-          
-          Kokkos::parallel_for("Inject_ions",
-                            prtl_to_inject(),
-                            kernel::injector::InjectSinglePrtls_kernel<M, decltype(maxwellian_2)>(
-                                species,
-                                maxwellian_2,
-                                x_wait_Cd
-                                ));
-        }
-        else if (prtl_to_inject() < 0){
-          // inject electrons
-          auto& species = domain.species[0];
-          coord_t<Dim::_1D> x_wait_Cd {ZERO};
-          coord_t<Dim::_1D> x_wait_Ph {ZERO};
-          x_wait_Ph[0] = static_cast<real_t>(x_wait);
-          domain.mesh.metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
-
-          Kokkos::parallel_for("Inject_electrons",
-                            prtl_to_inject(),
-                            kernel::injector::InjectSinglePrtls_kernel<M, decltype(maxwellian_1)>(
-                                species,
-                                maxwellian_1,
-                                x_wait_Cd
-                                ));
-        }
       }
-    }
-  };
+      
+
+    } // custom post step
+  }; // kernel
+
 } // namespace user
 #endif
