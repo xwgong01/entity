@@ -422,13 +422,11 @@ namespace user {
           
           domain.mesh.metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
           
-          if (species.use_tracking()){
-            species.set_counter(species.counter() + math::abs(prtl_to_inject_h()));
-          }
           Kokkos::parallel_for("Inject_ions",
-                            prtl_to_inject_h(),
+                            math::abs(prtl_to_inject_h()),
                             kernel::injector::InjectSinglePrtls_kernel<M, decltype(maxwellian_2)>(
                                 species,
+                                math::abs(prtl_to_inject_h()),
                                 maxwellian_2,
                                x_wait_Cd
                                 ));
@@ -438,6 +436,8 @@ namespace user {
           species.set_npart(species.npart() + math::abs(prtl_to_inject_h()));
           if (PRINT){
               Kokkos::printf("After Prtl Injection, npart = %d\n", species.npart());
+              Kokkos::printf("test prtl i1, dim0 = %d\n", species.i1.extent(0));
+              Kokkos::printf("test prtl i3, dim0 = %d\n", species.i3.extent(0));
           }
         }
         else if (prtl_to_inject_h() < 0){
@@ -448,13 +448,11 @@ namespace user {
           x_wait_Ph[0] = static_cast<real_t>(x_wait);
           domain.mesh.metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
 
-          if (species.use_tracking()){
-            species.set_counter(species.counter() + math::abs(prtl_to_inject_h()));
-          }
           Kokkos::parallel_for("Inject_electrons",
-                            prtl_to_inject_h(),
+                            math::abs(prtl_to_inject_h()),
                             kernel::injector::InjectSinglePrtls_kernel<M, decltype(maxwellian_1)>(
                                 species,
+                                math::abs(prtl_to_inject_h()),
                                 maxwellian_1,
                                 x_wait_Cd
                               ));
@@ -502,6 +500,9 @@ namespace user {
                                            inj_box);
       }
       
+      if (PRINT){
+          Kokkos::printf("Maxwelllian Injected\n");
+      }
 
     } // custom post step
   }; // kernel

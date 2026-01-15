@@ -30,8 +30,13 @@ struct InjectSinglePrtls_kernel {
     
     private:
         npart_t               p, cntr;
+        npart_t               nprtl_inj;
         array_t<int*>&        i1;
+        array_t<int*>&        i2;
+        array_t<int*>&        i3;
         array_t<prtldx_t*>&   dx1;
+        array_t<prtldx_t*>&   dx2;
+        array_t<prtldx_t*>&   dx3;
         array_t<real_t*>&     ux1;
         array_t<real_t*>&     ux2;
         array_t<real_t*>&     ux3;
@@ -47,20 +52,26 @@ struct InjectSinglePrtls_kernel {
         npart_t               domain_idx   = 0u;
         npart_t               offset;
         const ED              energy_distribution;
-        const bool           use_tracking;
+        const bool            use_tracking;
 
     public:
       InjectSinglePrtls_kernel(
           Particles<M::Dim, M::CoordType>& species,
+          npart_t                          nprtl_inj,
           const ED&                        energy_distribution,
           coord_t<Dim::_1D>&               x_Cd       
       ):
       i1 {species.i1},
+      i2 {species.i2},
+      i3 {species.i3},
       dx1 {species.dx1},
+      dx2 {species.dx2},
+      dx3 {species.dx3},
       ux1 {species.ux1},
       ux2 {species.ux2},
       ux3 {species.ux3},
       phi {species.phi},
+      nprtl_inj {nprtl_inj},
       x_Cd {x_Cd},
       weight {species.weight},
       tag {species.tag},
@@ -70,7 +81,11 @@ struct InjectSinglePrtls_kernel {
       dx_targ {static_cast<prtldx_t>(x_Cd[0] - static_cast<int>(x_Cd[0]))},
       offset {species.npart()},
       energy_distribution {energy_distribution},
-      use_tracking {species.use_tracking()} {}
+      use_tracking {species.use_tracking()} {
+        if (use_tracking){
+          species.set_counter(cntr + nprtl_inj);
+        }
+      }
     
     Inline void operator()(npart_t p) const {
       //if constexpr (M::CoordType == Coord::Cart){
@@ -81,15 +96,15 @@ struct InjectSinglePrtls_kernel {
         }
       if (not use_tracking) {
         InjectParticle<M::Dim, M::CoordType, false>(p + offset,
-                                                    i1, i1, i1, 
-                                                    dx1, dx1, dx1, 
+                                                    i1, i2, i3, 
+                                                    dx1, dx2, dx3, 
                                                     ux1, ux2, ux3,
                                                     phi, weight, tag, pld_i,
                                                     x_targ, dx_targ, v_Cd, weight_prtl, ZERO);
       } else {
         InjectParticle<M::Dim, M::CoordType, true>(p + offset,
-                                                  i1, i1, i1, 
-                                                  dx1, dx1, dx1, 
+                                                  i1, i2, i3, 
+                                                  dx1, dx2, dx3, 
                                                   ux1, ux2, ux3,
                                                   phi, weight, tag, pld_i,
                                                   x_targ, dx_targ, v_Cd, weight_prtl, ZERO,
