@@ -73,7 +73,7 @@ namespace kernel::mcp {
     real_t shock_filling_fraction, global_min, global_max, drift_ux, Lsh;
     real_t nu0, nu_coeff,Bmag;
     kernel::weibel::WeibelKernel weibel_kernel;
-    real_t x_wait;
+    const real_t x_wait;
     bool DEBUG;
     
   public:
@@ -109,6 +109,8 @@ namespace kernel::mcp {
       , ux1 { ux1 }
       , ux2 { ux2 }
       , ux3 { ux3 }
+      , pld_r {pld_r}
+      , pld_i {pld_i}
       , tag { tag }
       , mp  { mp }  // particle (electron) mass
       , mi  { mi }  // ion mass
@@ -256,14 +258,17 @@ Inline void operator()(index_t p) const {
 	// ------------------- final velocity -----------------
         ufin = boostVel(uw, -brel, lfrel);
 
-        
+        // if (DEBUG){
+        //     Kokkos::printf("Prtl inside main box , pldi=%d\n",pld_i(p, 0));
+        //     Kokkos::printf("Prtl inside main box , pldi=%d\n",pld_i(p, 1));
+        //     Kokkos::printf("Prtl inside main box , pldi=%d\n",pld_i(p, 2));
+        // }
 
     // ------------------- reflect beams to avoid being absorbed ---------------
 
-    // real_t x_wait = global_min + (global_max - global_min) * (1 - 0.01);
-
     if (x_prtl <= x_wait){
-        pld_i(p, user_plds::pldi) = 0; // reset the tag whether prtl is inside the isolaed box
+        
+        pld_i(p, user_plds::pldi) = 0; // reset the tag whether prtl is inside the isolated box
     }
     else { // prtl enters the isolated box
         if (DEBUG){
@@ -271,42 +276,42 @@ Inline void operator()(index_t p) const {
         }
         if (pld_i(p, user_plds::pldi) == 0) // if it is still active (enters the box for the first time)
         {
-            // pld_r(p,user_plds::pldr) = x_prtl - x_wait; // the real position relative to x_wait.
-            // pld_i(p,user_plds::pldi) = 1; // mark prtl as in the isolated box
+            pld_r(p,user_plds::pldr) = x_prtl - x_wait; // the real position relative to x_wait.
+            pld_i(p,user_plds::pldi) = 1; // mark prtl as in the isolated box
 
-            // // for particle entering box for first time, initialize. 
-            // //TODO(xgong): Inject a thermal particle 
-            // Kokkos::atomic_inc(&prtl_to_inject());
+            // for particle entering box for first time, initialize. 
+            //TODO(xgong): Inject a thermal particle 
+            Kokkos::atomic_inc(&prtl_to_inject());
         }
         else{
-            // pld_r(p,user_plds::pldr) += x_prtl - (x_wait + global_max)/2.0;
+            pld_r(p,user_plds::pldr) += x_prtl - (x_wait + global_max)/2.0;
         }
 
-        // if  (pld_r(p, user_plds::pldr) > 0){ // prtl still outside the main simulation
-        //     //drag prtl back to a safe place
-        //     if constexpr (D == Dim::_1D) {
-        //         coord_t<Dim::_1D> x_wait_Cd { ZERO };
-        //         coord_t<Dim::_1D> x_wait_Ph { ZERO };
-        //         x_wait_Ph[0] = static_cast<real_t>(x_wait/2 + global_max / 2);
-        //         metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
-        //         i1(p) = static_cast<int>(x_wait_Cd[0]);
-        //         dx1(p) = x_wait_Cd[0] - static_cast<int>(x_wait_Cd[0]);
-        //     }
+        if  (pld_r(p, user_plds::pldr) > 0){ // prtl still outside the main simulation
+            //drag prtl back to a safe place
+            if constexpr (D == Dim::_1D) {
+                coord_t<Dim::_1D> x_wait_Cd { ZERO };
+                coord_t<Dim::_1D> x_wait_Ph { ZERO };
+                x_wait_Ph[0] = static_cast<real_t>(x_wait/2 + global_max / 2);
+                metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
+                i1(p) = static_cast<int>(x_wait_Cd[0]);
+                dx1(p) = x_wait_Cd[0] - static_cast<int>(x_wait_Cd[0]);
+            }
 
-        // }
-        // else { //  prtl leave the isolated box and return to the main simulation
-        //     pld_i(p,user_plds::pldi) = 0; //  mark prtl as back
-        //     if constexpr (D == Dim::_1D) {
-        //         coord_t<Dim::_1D> x_wait_Cd { ZERO };
-        //         coord_t<Dim::_1D> x_wait_Ph { ZERO };
-        //         x_wait_Ph[0] = static_cast<real_t>(x_wait +pld_r(p, user_plds::pldr) );
-        //         metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
-        //         i1(p) = static_cast<int>(x_wait_Cd[0]);
-        //         dx1(p) = x_wait_Cd[0] - static_cast<int>(x_wait_Cd[0]);
-        //     }
-        //     //TODO(xgong): Inject a thermal particle
-        //     Kokkos::atomic_dec(&prtl_to_inject());
-        // }
+        }
+        else { //  prtl leave the isolated box and return to the main simulation
+            pld_i(p,user_plds::pldi) = 0; //  mark prtl as back
+            if constexpr (D == Dim::_1D) {
+                coord_t<Dim::_1D> x_wait_Cd { ZERO };
+                coord_t<Dim::_1D> x_wait_Ph { ZERO };
+                x_wait_Ph[0] = static_cast<real_t>(x_wait +pld_r(p, user_plds::pldr) );
+                metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
+                i1(p) = static_cast<int>(x_wait_Cd[0]);
+                dx1(p) = x_wait_Cd[0] - static_cast<int>(x_wait_Cd[0]);
+            }
+            //TODO(xgong): Inject a thermal particle
+            Kokkos::atomic_dec(&prtl_to_inject());
+        }
     }
  // ------------------- print diagnostic, default false -----------------
         
@@ -316,7 +321,7 @@ Inline void operator()(index_t p) const {
         
 
 	return;
-    }    
+    }   // operator 
   }; // UpdateVelKernel 
 }// namespace mcp
 

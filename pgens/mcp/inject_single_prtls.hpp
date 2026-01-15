@@ -96,8 +96,6 @@ struct InjectSinglePrtls_kernel {
                                                   domain_idx, p + cntr);
       }
     }
-
-
   };// struct InjectSinglePrtls_kernel
 
 

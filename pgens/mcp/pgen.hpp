@@ -272,8 +272,8 @@ namespace user {
                  Lsh,
                  Bmag,
                  nu0,
-                 x_wait,
                  nu_coeff,
+                 x_wait,
                  prtl_to_inject,
                  domain.random_pool, 
                  PRINT
@@ -402,11 +402,15 @@ namespace user {
       
         if (PRINT){
           Kokkos::printf("Finished maxwellian def\n");
+          prtl_to_inject_h() = 10;
           Kokkos::printf("prtl to inject: %d\n", prtl_to_inject_h());
           Kokkos::printf("xmax and xwait: %.2lf %.2lf\n", global_xmax, x_wait);
           Kokkos::printf("xmin and xmax: %.2lf %.2lf\n", xmin, xmax);
           Kokkos::printf("npldi : %d npldr: %d\n", domain.species[0].npld_i(),domain.species[0].npld_r());
           Kokkos::printf("npldi : %d npldr: %d\n", domain.species[1].npld_i(),domain.species[1].npld_r());
+
+          Kokkos::printf("electron npldi : %d npldi: %d\n", domain.species[0].pld_i.extent(0),domain.species[0].pld_i.extent(1));
+          Kokkos::printf("ion      npldi : %d npldi: %d\n", domain.species[1].pld_i.extent(0),domain.species[1].pld_i.extent(1));
         }
 
         if (prtl_to_inject_h() > 0){
@@ -418,6 +422,9 @@ namespace user {
           
           domain.mesh.metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
           
+          if (species.use_tracking()){
+            species.set_counter(species.counter() + math::abs(prtl_to_inject_h()));
+          }
           Kokkos::parallel_for("Inject_ions",
                             prtl_to_inject_h(),
                             kernel::injector::InjectSinglePrtls_kernel<M, decltype(maxwellian_2)>(
@@ -425,7 +432,13 @@ namespace user {
                                 maxwellian_2,
                                x_wait_Cd
                                 ));
-          species.set_npart(species.npart() + prtl_to_inject_h());
+          if (PRINT){
+              Kokkos::printf("Finished Prtl Injection, npart = %d\n", species.npart());
+          }
+          species.set_npart(species.npart() + math::abs(prtl_to_inject_h()));
+          if (PRINT){
+              Kokkos::printf("After Prtl Injection, npart = %d\n", species.npart());
+          }
         }
         else if (prtl_to_inject_h() < 0){
           // inject electrons
@@ -435,51 +448,29 @@ namespace user {
           x_wait_Ph[0] = static_cast<real_t>(x_wait);
           domain.mesh.metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
 
+          if (species.use_tracking()){
+            species.set_counter(species.counter() + math::abs(prtl_to_inject_h()));
+          }
           Kokkos::parallel_for("Inject_electrons",
                             prtl_to_inject_h(),
                             kernel::injector::InjectSinglePrtls_kernel<M, decltype(maxwellian_1)>(
                                 species,
                                 maxwellian_1,
                                 x_wait_Cd
-                                ));
-          species.set_npart(species.npart() - prtl_to_inject_h());
+                              ));
+          
+          species.set_npart(species.npart() + math::abs(prtl_to_inject_h()));
         }
         
         if (PRINT){
           Kokkos::printf("Finished first pgen loop\n");
         }
-
-
       } // if constexpr dim 1d
 
       // check if the injector should be active
       if (step % injection_frequency != 0) {
         return;
       }                                                                        
-
-      // define indice range to reset fields
-      // boundaries_t<bool> incl_ghosts;
-      // for (auto d = 0; d < M::Dim; ++d) {
-      //   incl_ghosts.push_back({ false, false });
-      // }
-
-      // // define box to reset fields
-      // boundaries_t<real_t> purge_box;
-      // // loop over all dimension
-      // for (auto d = 0u; d < M::Dim; ++d) {
-      //   if (d == 0) {
-      //     purge_box.push_back({ xmin, global_xmax });
-      //   } else {
-      //     purge_box.push_back(Range::All);
-      //   }
-      // }
-
-      // const auto extent = domain.mesh.ExtentToRange(purge_box, incl_ghosts);
-      // tuple_t<std::size_t, M::Dim> x_min { 0 }, x_max { 0 };
-      // for (auto d = 0; d < M::Dim; ++d) {
-      //   x_min[d] = extent[d].first;
-      //   x_max[d] = extent[d].second;
-      // }
 
       /*
           Inject slab of fresh plasma
@@ -494,6 +485,10 @@ namespace user {
         } else {
           inj_box.push_back(Range::All);
         }
+      }
+
+      if (PRINT){
+          Kokkos::printf("Defined Box\n");
       }
 
       if constexpr (M::Dim == Dim::_1D){
