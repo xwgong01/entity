@@ -58,6 +58,7 @@ namespace arch {
     if (not domain.mesh.Intersects(box)) {
       return { false, array_t<real_t*> {}, array_t<real_t*> {} };
     }
+
     coord_t<M::Dim> xCorner_min_Ph { ZERO };
     coord_t<M::Dim> xCorner_max_Ph { ZERO };
     coord_t<M::Dim> xCorner_min_Cd { ZERO };
@@ -77,9 +78,7 @@ namespace arch {
                                                           xCorner_min_Cd);
     domain.mesh.metric.template convert<Crd::Ph, Crd::Cd>(xCorner_max_Ph,
                                                           xCorner_max_Cd);
-
     array_t<real_t*> xi_min { "xi_min", M::Dim }, xi_max { "xi_max", M::Dim };
-
     auto xi_min_h = Kokkos::create_mirror_view(xi_min);
     auto xi_max_h = Kokkos::create_mirror_view(xi_max);
     for (auto d { 0u }; d < M::Dim; ++d) {
@@ -223,7 +222,7 @@ namespace arch {
         0.0f) {
       raise::Warning("Total charge of the injected species is non-zero", HERE);
     }
-
+ 
     {
       boundaries_t<real_t> nonempty_box;
       for (auto d { 0u }; d < M::Dim; ++d) {
@@ -233,13 +232,16 @@ namespace arch {
           nonempty_box.push_back(Range::All);
         }
       }
+      
       const auto result = ComputeNumInject(params, domain, number_density, nonempty_box);
       if (not std::get<0>(result)) {
         return;
       }
+
       const auto nparticles = std::get<1>(result);
       const auto xi_min     = std::get<2>(result);
       const auto xi_max     = std::get<3>(result);
+      
 
       Kokkos::parallel_for("InjectUniform",
                            nparticles,

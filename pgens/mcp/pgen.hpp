@@ -413,56 +413,83 @@ namespace user {
           Kokkos::printf("ion      npldi : %d npldi: %d\n", domain.species[1].pld_i.extent(0),domain.species[1].pld_i.extent(1));
         }
 
+
+        coord_t<Dim::_1D> x_wait_Cd {ZERO};
+        coord_t<Dim::_1D> x_wait_Ph {ZERO};
+        x_wait_Ph[0] = static_cast<real_t>(x_wait);
+        domain.mesh.metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
+
         if (prtl_to_inject_h() > 0){
           // inject ions
           auto& species = domain.species[1];
-          coord_t<Dim::_1D> x_wait_Cd {ZERO};
-          coord_t<Dim::_1D> x_wait_Ph {ZERO};
-          x_wait_Ph[0] = static_cast<real_t>(x_wait);
           
-          domain.mesh.metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
-          
+          if (PRINT){Kokkos::printf("Setting npart to %d\n", species.npart()+ math::abs(prtl_to_inject_h()));}
+          species.set_npart(species.npart() + math::abs(prtl_to_inject_h()));
+          if (PRINT){Kokkos::printf("Now nprtl %d\n", species.npart());}
+
+          if (species.use_tracking()){
+            species.set_counter(species.counter() + math::abs(prtl_to_inject_h()));
+          }
+
           Kokkos::parallel_for("Inject_ions",
                             math::abs(prtl_to_inject_h()),
                             kernel::injector::InjectSinglePrtls_kernel<M, decltype(maxwellian_2)>(
-                                species,
+                                species.i1,species.i2,species.i3,
+                                species.dx1,species.dx2,species.dx3,
+                                species.ux1,species.ux2,species.ux3,
+                                species.phi,species.weight, species.tag,
+                                species.pld_i,
                                 math::abs(prtl_to_inject_h()),
                                 maxwellian_2,
-                               x_wait_Cd
+                                x_wait_Cd[0],
+                                species.counter(),
+                                species.npart(),
+                                species.maxnpart(),
+                                species.use_tracking()
                                 ));
           if (PRINT){
               Kokkos::printf("Finished Prtl Injection, npart = %d\n", species.npart());
-          }
-          species.set_npart(species.npart() + math::abs(prtl_to_inject_h()));
-          if (PRINT){
-              Kokkos::printf("After Prtl Injection, npart = %d\n", species.npart());
-              Kokkos::printf("test prtl i1, dim0 = %d\n", species.i1.extent(0));
-              Kokkos::printf("test prtl i3, dim0 = %d\n", species.i3.extent(0));
           }
         }
         else if (prtl_to_inject_h() < 0){
           // inject electrons
           auto& species = domain.species[0];
-          coord_t<Dim::_1D> x_wait_Cd {ZERO};
-          coord_t<Dim::_1D> x_wait_Ph {ZERO};
-          x_wait_Ph[0] = static_cast<real_t>(x_wait);
-          domain.mesh.metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
+
+          if (PRINT){Kokkos::printf("Setting npart to %d\n", species.npart()+ math::abs(prtl_to_inject_h()));}
+          species.set_npart(species.npart() + math::abs(prtl_to_inject_h()));
+          if (PRINT){Kokkos::printf("Now nprtl %d\n", species.npart());}
+
+          if (species.use_tracking()){
+            species.set_counter(species.counter() + math::abs(prtl_to_inject_h()));
+          }
 
           Kokkos::parallel_for("Inject_electrons",
                             math::abs(prtl_to_inject_h()),
-                            kernel::injector::InjectSinglePrtls_kernel<M, decltype(maxwellian_1)>(
-                                species,
+                            kernel::injector::InjectSinglePrtls_kernel<M, decltype(maxwellian_2)>(
+                                species.i1,species.i2,species.i3,
+                                species.dx1,species.dx2,species.dx3,
+                                species.ux1,species.ux2,species.ux3,
+                                species.phi,species.weight, species.tag,
+                                species.pld_i,
                                 math::abs(prtl_to_inject_h()),
                                 maxwellian_1,
-                                x_wait_Cd
-                              ));
+                                x_wait_Cd[0],
+                                species.counter(),
+                                species.npart(),
+                                species.maxnpart(),
+                                species.use_tracking()
+                                ));
           
-          species.set_npart(species.npart() + math::abs(prtl_to_inject_h()));
         }
         
         if (PRINT){
           Kokkos::printf("Finished first pgen loop\n");
+          Kokkos::printf("Try to fence\n");
+          Kokkos::fence();
+          Kokkos::printf("Fence successful\n");
         }
+
+        
       } // if constexpr dim 1d
 
       // check if the injector should be active
