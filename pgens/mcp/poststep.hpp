@@ -67,6 +67,7 @@ namespace kernel::mcp {
     array_t<npart_t**>            pld_i;
     array_t<short*>               tag;
     array_t<real_t*>              weight;
+    const real_t                  charge;
     array_t<int>                  prtl_to_inject;
     random_number_pool_t          random_pool;
     const real_t  dt, mp, mi;
@@ -89,6 +90,7 @@ namespace kernel::mcp {
                   array_t<npart_t**>&            pld_i,
                   array_t<short*>&               tag,
                   array_t<real_t*>&              weight,
+                  real_t                         charge,
                   real_t                         mp,
                   real_t                         mi,
                   simtime_t                      time,
@@ -128,6 +130,7 @@ namespace kernel::mcp {
       , nu0 {nu0}
       , x_wait {x_wait}
       , nu_coeff {nu_coeff}
+      , charge {charge}
       , prtl_to_inject {prtl_to_inject}
       , random_pool {random_pool}
       , DEBUG {DEBUG} {
@@ -283,7 +286,7 @@ Inline void operator()(index_t p) const {
             pld_i(p,user_plds::pldi) = 1; // mark prtl as in the isolated box
             weight(p) = ZERO; // not letting prtl affect the field
             // for particle entering box for first time, initialize. 
-            Kokkos::atomic_inc(&prtl_to_inject());
+            Kokkos::atomic_add(&prtl_to_inject(),(charge > 0) ? ONE: -ONE);
         }
         else{
             pld_r(p,user_plds::pldr) += x_prtl - (x_wait + global_max)/2.0;
@@ -316,7 +319,7 @@ Inline void operator()(index_t p) const {
             weight(p) = ONE; // to re-enable prtl feedback on fld
 
             //Inject a thermal particle
-            Kokkos::atomic_dec(&prtl_to_inject());
+            Kokkos::atomic_add(&prtl_to_inject(),(charge > 0) ? -ONE:ONE);
         }
     }
  // ------------------- print diagnostic, default false -----------------

@@ -264,7 +264,7 @@ namespace user {
              kernel::mcp::UpdateVelKernel<M, D>(
                  domain.mesh.metric,
                  species.i1, species.dx1, species.ux1, species.ux2, species.ux3, species.pld_r, species.pld_i,
-                 species.tag, species.weight, species.mass(), domain.species[1].mass(), time, dt,  //domain.mesh.metric,
+                 species.tag, species.weight, species.charge(), species.mass(), domain.species[1].mass(), time, dt,  //domain.mesh.metric,
                  shock_filling_fraction,
                  global_xmin,
                  global_xmax,

@@ -12,7 +12,7 @@ export HDF5_ROOT=/shared/apps/hdf5/1.14.6/openmpi/5.0.5/gcc/12.1.0
 cmake -B build_leaky \
    -DCMAKE_PREFIX_PATH=/obs/xgong/dependency/ADIOS2_MPI \
    -D pgen=mcp -D precision=double -D mpi=OFF -D output=ON -D ADIOS2_USE_CUDA=OFF -D Kokkos_ENABLE_CUDA=ON -D gpu_aware_mpi=OFF -D Kokkos_ARCH_VOLTA70=ON \
-   -D deposit=esirkepov -D shape_order=9
+   -D deposit=esirkepov -D shape_order=3
 cmake --build build_leaky -j
 
 #Kokkos_ARCH_AMPERE80=ON for A100
