@@ -66,6 +66,7 @@ namespace kernel::mcp {
     array_t<real_t**>             pld_r;
     array_t<npart_t**>            pld_i;
     array_t<short*>               tag;
+    array_t<real_t*>              weight;
     array_t<int>                  prtl_to_inject;
     random_number_pool_t          random_pool;
     const real_t  dt, mp, mi;
@@ -87,6 +88,7 @@ namespace kernel::mcp {
                   array_t<real_t**>&             pld_r,
                   array_t<npart_t**>&            pld_i,
                   array_t<short*>&               tag,
+                  array_t<real_t*>&              weight,
                   real_t                         mp,
                   real_t                         mi,
                   simtime_t                      time,
@@ -120,6 +122,7 @@ namespace kernel::mcp {
       , global_min {global_min}
       , global_max {global_max}
       , drift_ux {drift_ux}
+      , weight {weight}
       , Lsh {Lsh}
       , Bmag {Bmag}
       , nu0 {nu0}
@@ -272,15 +275,14 @@ Inline void operator()(index_t p) const {
     }
     else { // prtl enters the isolated box
         if (DEBUG){
-            Kokkos::printf("Prtl in isolated box , x=%.4f, xwait=%.4f\n", x_prtl, x_wait );
+            // Kokkos::printf("Prtl in isolated box , x=%.4f, xwait=%.4f\n", x_prtl, x_wait );
         }
         if (pld_i(p, user_plds::pldi) == 0) // if it is still active (enters the box for the first time)
         {
             pld_r(p,user_plds::pldr) = x_prtl - x_wait; // the real position relative to x_wait.
             pld_i(p,user_plds::pldi) = 1; // mark prtl as in the isolated box
-
+            weight(p) = ZERO; // not letting prtl affect the field
             // for particle entering box for first time, initialize. 
-            //TODO(xgong): Inject a thermal particle 
             Kokkos::atomic_inc(&prtl_to_inject());
         }
         else{
@@ -297,7 +299,8 @@ Inline void operator()(index_t p) const {
                 i1(p) = static_cast<int>(x_wait_Cd[0]);
                 dx1(p) = x_wait_Cd[0] - static_cast<int>(x_wait_Cd[0]);
             }
-
+            
+            if (DEBUG){assert(weight(p) == ZERO);}
         }
         else { //  prtl leave the isolated box and return to the main simulation
             pld_i(p,user_plds::pldi) = 0; //  mark prtl as back
@@ -309,7 +312,10 @@ Inline void operator()(index_t p) const {
                 i1(p) = static_cast<int>(x_wait_Cd[0]);
                 dx1(p) = x_wait_Cd[0] - static_cast<int>(x_wait_Cd[0]);
             }
-            //TODO(xgong): Inject a thermal particle
+            if (DEBUG){assert(weight(p) == ZERO);}
+            weight(p) = ONE; // to re-enable prtl feedback on fld
+
+            //Inject a thermal particle
             Kokkos::atomic_dec(&prtl_to_inject());
         }
     }

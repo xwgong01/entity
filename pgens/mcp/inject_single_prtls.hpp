@@ -46,7 +46,6 @@ struct InjectSinglePrtls_kernel {
         array_t<npart_t**>   pld_i;
         tuple_t<int, Dim::_1D>      x_targ {static_cast<int>(ZERO)};
         tuple_t<prtldx_t, Dim::_1D> dx_targ {static_cast<prtldx_t>(ZERO)};
-        real_t                x_Cd_0;
         real_t                weight_prtl       = ONE;
         real_t                phi_prtl          = ZERO;
         npart_t               domain_idx   = 0u;
@@ -73,7 +72,8 @@ struct InjectSinglePrtls_kernel {
           array_t<npart_t**>&              pld_i,
           npart_t                          nprtl_inj,
           const ED&                        energy_distribution,
-          real_t                           x_Cd_0,
+          int                              x_targ,
+          prtldx_t                         dx_targ,
           npart_t                          cntr,
           npart_t                          offset,
           npart_t                          maxnpart,
@@ -91,13 +91,12 @@ struct InjectSinglePrtls_kernel {
       phi {phi},
       maxnpart {maxnpart},
       nprtl_inj {nprtl_inj},
-      x_Cd_0 {x_Cd_0},
       weight {weight},
       tag {tag},
       pld_i {pld_i},
       cntr {cntr},
-      x_targ {static_cast<int>(x_Cd_0)},
-      dx_targ {static_cast<prtldx_t>(x_Cd_0 - static_cast<int>(x_Cd_0))},
+      x_targ {x_targ},
+      dx_targ {dx_targ},
       offset {offset},
       energy_distribution {energy_distribution},
       use_tracking {use_tracking} {
@@ -108,7 +107,7 @@ struct InjectSinglePrtls_kernel {
       assert(p + offset < maxnpart);
       //if constexpr (M::CoordType == Coord::Cart){
       vec_t<Dim::_3D>       v_Cd {ZERO,ZERO,ZERO};
-      coord_t<Dim::_1D>     x_Cd {x_Cd_0};
+      coord_t<Dim::_1D>     x_Cd {ZERO};
       
       if (M::Dim == Dim::_1D){
         energy_distribution(x_Cd, v_Cd);

@@ -264,7 +264,7 @@ namespace user {
              kernel::mcp::UpdateVelKernel<M, D>(
                  domain.mesh.metric,
                  species.i1, species.dx1, species.ux1, species.ux2, species.ux3, species.pld_r, species.pld_i,
-                 species.tag, species.mass(), domain.species[1].mass(), time, dt,  //domain.mesh.metric,
+                 species.tag, species.weight, species.mass(), domain.species[1].mass(), time, dt,  //domain.mesh.metric,
                  shock_filling_fraction,
                  global_xmin,
                  global_xmax,
@@ -282,8 +282,6 @@ namespace user {
       
       // deep copy the calculated number of prtls to host
       Kokkos::deep_copy(prtl_to_inject_h, prtl_to_inject);
-
-
 
       // compute the mean electric field Ex
       if ((step == 0) || (is_resuming)){ // initialize cbuff value
@@ -360,7 +358,7 @@ namespace user {
       // loop over all dimension
       for (auto d = 0u; d < M::Dim; ++d) {
         if (d == 0) {
-          purge_box_wait.push_back({ xmax, global_xmax });
+          purge_box_wait.push_back({ xmax-0.4, global_xmax });
         } else {
           purge_box_wait.push_back(Range::All);
         }
@@ -390,19 +388,18 @@ namespace user {
         std::vector<real_t> { -drift_ux, ZERO, ZERO });
       // Inject Prtls to keep charge neutral
       if constexpr (M::Dim == Dim::_1D){
-        
         const auto maxwellian_1 = arch::Maxwellian<S, M>(domain.mesh.metric,
                                                      domain.random_pool,
-                                                     temperature,
+                                                     temperature / domain.species[0].mass(),
                                                      drifts.first);
         const auto maxwellian_2 = arch::Maxwellian<S, M>(domain.mesh.metric,
                                                      domain.random_pool,
-                                                     temperature * temperature_ratio,
+                                                     temperature * temperature_ratio / domain.species[1].mass(),
                                                      drifts.second);
       
         if (PRINT){
           Kokkos::printf("Finished maxwellian def\n");
-          prtl_to_inject_h() = 10;
+          // prtl_to_inject_h() = 10;
           Kokkos::printf("prtl to inject: %d\n", prtl_to_inject_h());
           Kokkos::printf("xmax and xwait: %.2lf %.2lf\n", global_xmax, x_wait);
           Kokkos::printf("xmin and xmax: %.2lf %.2lf\n", xmin, xmax);
@@ -419,6 +416,15 @@ namespace user {
         x_wait_Ph[0] = static_cast<real_t>(x_wait);
         domain.mesh.metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
 
+        // For the right boundary, we need to injected the particls slightly on the left side of the waiting zone, so
+        // it will not initially appear in the separated box
+        int x_targ = static_cast<int>(x_wait_Cd[0]);
+        prtldx_t dx_targ= static_cast<prtldx_t>(ZERO);
+
+
+        // If there are extra prtls to inject to conserve charge neutrality, inject these prtls. 
+        // A kernel of prtl injection of certain species, certain number 
+        //     with certain energy distribution at certain location is implemented. 
         if (prtl_to_inject_h() > 0){
           // inject ions
           auto& species = domain.species[1];
@@ -441,7 +447,8 @@ namespace user {
                                 species.pld_i,
                                 math::abs(prtl_to_inject_h()),
                                 maxwellian_2,
-                                x_wait_Cd[0],
+                                x_targ,
+                                dx_targ,
                                 species.counter(),
                                 species.npart(),
                                 species.maxnpart(),
@@ -473,7 +480,8 @@ namespace user {
                                 species.pld_i,
                                 math::abs(prtl_to_inject_h()),
                                 maxwellian_1,
-                                x_wait_Cd[0],
+                                x_targ,
+                                dx_targ,
                                 species.counter(),
                                 species.npart(),
                                 species.maxnpart(),
@@ -528,7 +536,7 @@ namespace user {
       }
       
       if (PRINT){
-          Kokkos::printf("Maxwelllian Injected\n");
+          Kokkos::printf("Maxwellian Injected\n");
       }
 
     } // custom post step
