@@ -360,7 +360,7 @@ namespace user {
       // loop over all dimension
       for (auto d = 0u; d < M::Dim; ++d) {
         if (d == 0) {
-          purge_box_wait.push_back({ xmax-0.4, global_xmax });
+          purge_box_wait.push_back({ xmax, global_xmax });
         } else {
           purge_box_wait.push_back(Range::All);
         }
