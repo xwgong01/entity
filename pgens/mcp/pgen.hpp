@@ -135,7 +135,7 @@ namespace user {
     random_number_pool_t             random_pool;
     const bool DEBUG;
     bool is_resuming=false;
-    real_t x_wait, wait_offset;
+    real_t x_wait, x_wait_l, wait_offset;
 
 
 
@@ -255,6 +255,7 @@ namespace user {
       Kokkos::deep_copy(prtl_to_inject, ZERO);
 
       x_wait = global_xmax - wait_offset;
+      x_wait_l = global_xmin + wait_offset;
       
       // Apply stochastic scattering 
       for (auto& species : domain.species) {
@@ -274,6 +275,7 @@ namespace user {
                  nu0,
                  nu_coeff,
                  x_wait,
+                 x_wait_l,
                  prtl_to_inject,
                  domain.random_pool, 
                  PRINT
@@ -452,7 +454,8 @@ namespace user {
                                 species.counter(),
                                 species.npart(),
                                 species.maxnpart(),
-                                species.use_tracking()
+                                species.use_tracking(),
+                                domain.index()
                                 ));
           if (PRINT){
               Kokkos::printf("Finished Prtl Injection, npart = %d\n", species.npart());
@@ -485,7 +488,8 @@ namespace user {
                                 species.counter(),
                                 species.npart(),
                                 species.maxnpart(),
-                                species.use_tracking()
+                                species.use_tracking(),
+                                domain.index()
                                 ));
           
         }

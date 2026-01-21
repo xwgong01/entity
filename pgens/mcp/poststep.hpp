@@ -75,7 +75,7 @@ namespace kernel::mcp {
     real_t shock_filling_fraction, global_min, global_max, drift_ux, Lsh;
     real_t nu0, nu_coeff,Bmag;
     kernel::weibel::WeibelKernel weibel_kernel;
-    const real_t x_wait;
+    const real_t x_wait, x_wait_l;
     bool DEBUG;
     
   public:
@@ -104,6 +104,7 @@ namespace kernel::mcp {
                   real_t                         nu0,
                   real_t                         nu_coeff,
                   real_t                         x_wait,
+                  real_t                         x_wait_l,
                   array_t<int>                   prtl_to_inject,
                   random_number_pool_t          &random_pool,
                   bool                           DEBUG): 
@@ -129,6 +130,7 @@ namespace kernel::mcp {
       , Bmag {Bmag}
       , nu0 {nu0}
       , x_wait {x_wait}
+      , x_wait_l {x_wait_l}
       , nu_coeff {nu_coeff}
       , charge {charge}
       , prtl_to_inject {prtl_to_inject}
@@ -264,26 +266,21 @@ Inline void operator()(index_t p) const {
 	// ------------------- final velocity -----------------
         ufin = boostVel(uw, -brel, lfrel);
 
-        // if (DEBUG){
-        //     Kokkos::printf("Prtl inside main box , pldi=%d\n",pld_i(p, 0));
-        //     Kokkos::printf("Prtl inside main box , pldi=%d\n",pld_i(p, 1));
-        //     Kokkos::printf("Prtl inside main box , pldi=%d\n",pld_i(p, 2));
-        // }
 
-    // ------------------- reflect beams to avoid being absorbed ---------------
+    // ------------------- reflect beams to avoid being absorbed by right boundary ---------------
 
-    if (x_prtl <= x_wait){
-        
+    assert(x_wait_l < x_wait);
+    if ((x_prtl <= x_wait) && (x_prtl >= x_wait_l)){
         pld_i(p, user_plds::pldi) = 0; // reset the tag whether prtl is inside the isolated box
     }
-    else { // prtl enters the isolated box
+    else if (x_prtl > x_wait) { // prtl enters the isolated box right
         if (DEBUG){
             // Kokkos::printf("Prtl in isolated box , x=%.4f, xwait=%.4f\n", x_prtl, x_wait );
         }
         if (pld_i(p, user_plds::pldi) == 0) // if it is still active (enters the box for the first time)
         {
             pld_r(p,user_plds::pldr) = x_prtl - x_wait; // the real position relative to x_wait.
-            pld_i(p,user_plds::pldi) = 1; // mark prtl as in the isolated box
+            pld_i(p,user_plds::pldi) = 1; // mark prtl as in the right isolated box
             weight(p) = ZERO; // not letting prtl affect the field
             // for particle entering box for first time, initialize. 
             Kokkos::atomic_add(&prtl_to_inject(),(charge > 0) ? ONE: -ONE);
@@ -322,12 +319,58 @@ Inline void operator()(index_t p) const {
             Kokkos::atomic_add(&prtl_to_inject(),(charge > 0) ? -ONE:ONE);
         }
     }
+    else if (x_prtl < x_wait_l){ //prtl enters the isolated box left
+        if (pld_i(p, user_plds::pldi) == 0) // if it is still active (enters the box for the first time)
+        {
+            pld_r(p,user_plds::pldr) = x_prtl - x_wait_l; // the real position relative to x_wait.
+            pld_i(p,user_plds::pldi) = 2; // mark prtl as in the right isolated box
+            weight(p) = ZERO; // not letting prtl affect the field
+            // for particle entering box for first time, initialize. 
+        }
+        else{
+            pld_r(p,user_plds::pldr) += x_prtl - (x_wait_l + global_min)/2.0;
+        }
+
+        if  (pld_r(p, user_plds::pldr) < 0){ // prtl still outside the main simulation
+            //drag prtl back to a safe place
+            if constexpr (D == Dim::_1D) {
+                coord_t<Dim::_1D> x_wait_l_Cd { ZERO };
+                coord_t<Dim::_1D> x_wait_l_Ph { ZERO };
+                x_wait_l_Ph[0] = static_cast<real_t>(x_wait_l/2 + global_min / 2);
+                metric.template convert<Crd::Ph,Crd::Cd>(x_wait_l_Ph, x_wait_l_Cd);
+                i1(p) = static_cast<int>(x_wait_l_Cd[0]);
+                dx1(p) = x_wait_l_Cd[0] - static_cast<int>(x_wait_l_Cd[0]);
+            }
+            
+            if (DEBUG){assert(weight(p) == ZERO);}
+        }
+        else { //  prtl leave the isolated box and return to the main simulation
+            pld_i(p,user_plds::pldi) = 0; //  mark prtl as back
+            if constexpr (D == Dim::_1D) {
+                coord_t<Dim::_1D> x_wait_l_Cd { ZERO };
+                coord_t<Dim::_1D> x_wait_l_Ph { ZERO };
+                x_wait_l_Ph[0] = static_cast<real_t>(x_wait_l + pld_r(p, user_plds::pldr));
+                metric.template convert<Crd::Ph,Crd::Cd>(x_wait_l_Ph, x_wait_l_Cd);
+                i1(p) = static_cast<int>(x_wait_l_Cd[0]);
+                dx1(p) = x_wait_l_Cd[0] - static_cast<int>(x_wait_l_Cd[0]);
+            }
+            if (DEBUG){assert(weight(p) == ZERO);}
+            weight(p) = ONE; // to re-enable prtl feedback on fld
+
+        }
+
+        real_t rg = norm(uw) * mp / ((Bmag+1e-10) * 4.0);
+        real_t mfp = norm(uw) / nu;
+
+        if (math::abs(pld_r(p, user_plds::pldr)) > math::min(rg, mfp)){
+            tag(p) = ParticleTag::dead; // kill particles too far away
+        }
+    }
  // ------------------- print diagnostic, default false -----------------
         
     ux1(p) = ufin[0];
     ux2(p) = ufin[1];
     ux3(p) = ufin[2];
-        
 
 	return;
     }   // operator 

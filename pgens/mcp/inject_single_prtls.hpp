@@ -77,7 +77,8 @@ struct InjectSinglePrtls_kernel {
           npart_t                          cntr,
           npart_t                          offset,
           npart_t                          maxnpart,
-          bool                             use_tracking   
+          bool                             use_tracking,
+          npart_t                          domain_idx
       ):
       i1 {i1},
       i2 {i2},
@@ -99,7 +100,8 @@ struct InjectSinglePrtls_kernel {
       dx_targ {dx_targ},
       offset {offset},
       energy_distribution {energy_distribution},
-      use_tracking {use_tracking} {
+      use_tracking {use_tracking},
+      domain_idx {domain_idx} {
         
       }
     
