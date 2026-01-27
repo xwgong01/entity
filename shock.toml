@@ -1,0 +1,74 @@
+[simulation]
+  name    = "shock_amano09"
+  engine  = "srpic"
+  runtime = 1001.0
+
+[grid]
+  resolution = [4096, 256]
+  extent     = [[0.0, 204.8], [0.0, 12.8]]
+
+  [grid.metric]
+    metric = "minkowski"
+
+  [grid.boundaries]
+    fields    = [["CONDUCTOR", "MATCH"], ["PERIODIC"]]
+    particles = [["REFLECT", "ABSORB"], ["PERIODIC"]]
+
+[scales]
+  larmor0    = 1.0
+  skindepth0 = 1.0
+
+[algorithms]
+  current_filters = 8
+
+  [algorithms.timestep]
+    CFL = 0.7
+
+[particles]
+  ppc0 = 40.0
+
+  [[particles.species]]
+    label    = "e-"
+    mass     = 1.0
+    charge   = -1.0
+    maxnpart = 2e8
+
+  [[particles.species]]
+    label    = "p+"
+    mass     = 25.0
+    charge   = 1.0
+    maxnpart = 2e8
+
+[setup]
+  drift_ux    = 0.2         # speed towards the wall [c]
+  temperature = 0.0004        # temperature of maxwell distribution [kB T / (m_i c^2)]
+  temperature_ratio = 1.0    # temperature ratio of electrons to protons
+  Bmag = 0.0707              # magnetic field strength as fraction of magnetisation
+  Btheta = 90.0              # magnetic field angle in the plane
+  Bphi = 0.0                 # magnetic field angle out of plane
+  filling_fraction = 0.0     # fraction of the shock piston filled with plasma
+  injector_velocity = 0.3    # speed of injector [c]
+  injection_start = 0.0      # start time of moving injector
+  injection_frequency = 100
+
+[output]
+  interval_time = 200.0
+  format        = "BPFile"
+  
+  [output.fields]
+	quantities = ["N_1", "N_2", "B", "E", "J", "T00_1", "T0i_1", "Tij_1", "T00_2", "T0i_2", "Tij_2"]
+
+  [output.particles]
+    enable = true
+    stride = 10 
+
+  [output.spectra]
+    enable = true
+
+[diagnostics]
+  log_level = "WARNING"
+  blocking_timers = true
+
+[checkpoint]
+  interval = 10000
+  keep = 1
