@@ -49,38 +49,38 @@ namespace user {
     // magnetic field components
     Inline auto bx1(const coord_t<D>& x) const -> real_t {
       // To ensure the left match boundary is consistent with the jump condition
-      if (x[0] < global_min+ 0.01 * (global_max - global_min))
+      if (x[0] < global_min+ 0.05 * (global_max - global_min))
         return Bmag_lb * math::cos(Btheta);     // theta = pi/2, phi = 0, such that B only has Bz. 
       return Bmag * math::cos(Btheta);    
     }
 
     Inline auto bx2(const coord_t<D>& x) const -> real_t {
-      if (x[0] < global_min+ 0.01 * (global_max - global_min))
+      if (x[0] < global_min+ 0.05 * (global_max - global_min))
       	return Bmag_lb * math::sin(Btheta) * math::sin(Bphi);
       return Bmag * math::sin(Btheta) * math::sin(Bphi);
     }
 
     Inline auto bx3(const coord_t<D>& x) const -> real_t {
-      if (x[0] < global_min+ 0.01 * (global_max - global_min))
+      if (x[0] < global_min+ 0.05 * (global_max - global_min))
       	return Bmag_lb * math::sin(Btheta) * math::cos(Bphi);
       return Bmag * math::sin(Btheta) * math::cos(Bphi);
     }
 
     // electric field components
     Inline auto ex1(const coord_t<D>& x) const -> real_t {
-      if (x[0] < global_min+ 0.01 * (global_max - global_min))
+      if (x[0] < global_min+ 0.05 * (global_max - global_min))
           return ZERO;
       return ZERO;
     }
 
     Inline auto ex2(const coord_t<D>&  x) const -> real_t {
-      if (x[0] < global_min+ 0.01 * (global_max - global_min))
+      if (x[0] < global_min+ 0.05 * (global_max - global_min))
       	return Vx / 4.0 * Bmag_lb * math::sin(Btheta) * math::cos(Bphi);
       return Vx * Bmag * math::sin(Btheta) * math::cos(Bphi);
     }
 
     Inline auto ex3(const coord_t<D>& x) const -> real_t {
-      if (x[0] < global_min+ 0.01 * (global_max - global_min))
+      if (x[0] < global_min + 0.05 * (global_max - global_min))
       	return -Vx / 4.0 * Bmag_lb * math::sin(Btheta) * math::sin(Bphi);
       return -Vx * Bmag * math::sin(Btheta) * math::sin(Bphi);
     }
@@ -372,9 +372,34 @@ namespace user {
         x_wait_min[d] = extent_wait[d].first;
         x_wait_max[d] = extent_wait[d].second;
       }
+      
 
-      Kokkos::parallel_for("ResetFields",
-                           CreateRangePolicy<M::Dim>(x_wait_min, x_wait_max),
+      // Reset fields for left boundary
+      boundaries_t<bool> incl_ghosts_wait_l;
+      for (auto d = 0; d < M::Dim; ++d) {
+        incl_ghosts_wait_l.push_back({ false, false });
+      }
+
+      // define box to reset fields
+      boundaries_t<real_t> purge_box_wait_l;
+      // loop over all dimension
+      for (auto d = 0u; d < M::Dim; ++d) {
+        if (d == 0) {
+          purge_box_wait_l.push_back({ global_xmin, x_wait_l});
+        } else {
+          purge_box_wait_l.push_back(Range::All);
+        }
+      }
+
+      const auto extent_wait_l = domain.mesh.ExtentToRange(purge_box_wait_l, incl_ghosts_wait_l);
+      tuple_t<std::size_t, M::Dim> x_wait_l_min { 0 }, x_wait_l_max { 0 };
+      for (auto d = 0; d < M::Dim; ++d) {
+        x_wait_l_min[d] = extent_wait_l[d].first;
+        x_wait_l_max[d] = extent_wait_l[d].second;
+      }
+
+      Kokkos::parallel_for("ResetFieldsLeft",
+                           CreateRangePolicy<M::Dim>(x_wait_l_min, x_wait_l_max),
                            arch::SetEMFields_kernel<decltype(init_flds), S, M> {
                              domain.fields.em,
                              init_flds,

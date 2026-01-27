@@ -360,9 +360,9 @@ Inline void operator()(index_t p) const {
         }
 
         real_t rg = norm(uw) * mp / ((Bmag+1e-10) * 4.0);
-        real_t mfp = norm(uw) / nu;
+        real_t ldiff = norm(uw) * norm(uw) / math::abs(u_weibel) / nu;
 
-        if (math::abs(pld_r(p, user_plds::pldr)) > math::min(rg, mfp)){
+        if (math::abs(pld_r(p, user_plds::pldr)) > math::min(rg, ldiff)){
             tag(p) = ParticleTag::dead; // kill particles too far away
         }
     }
