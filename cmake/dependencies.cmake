@@ -110,7 +110,7 @@ function(find_or_fetch_dependency package_name header_only mode)
           ${CMAKE_CURRENT_SOURCE_DIR}/extern/${package_name}
           CACHE PATH "Path to ${package_name} src")
       set(${package_name}_BUILD_DIR
-          ${CMAKE_CURRENT_SOURCE_DIR}/build/extern/${package_name}
+          ${CMAKE_CURRENT_BINARY_DIR}/extern/${package_name}
           CACHE PATH "Path to ${package_name} build")
     endif()
   else()
