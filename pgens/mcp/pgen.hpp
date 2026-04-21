@@ -1,0 +1,575 @@
+#ifndef PROBLEM_GENERATOR_H
+#define PROBLEM_GENERATOR_H
+
+#include "enums.h"
+#include "global.h"
+
+#include "arch/traits.h"
+#include "arch/kokkos_aliases.h"
+#include "utils/error.h"
+#include "utils/numeric.h"
+
+#include "archetypes/energy_dist.h"
+#include "archetypes/utils.h"
+#include "archetypes/field_setter.h"
+#include "archetypes/particle_injector.h"
+#include "archetypes/problem_generator.h"
+#include "framework/domain/metadomain.h"
+#include <Kokkos_Random.hpp>
+#include "poststep.hpp"
+#include "inject_single_prtls.hpp"
+
+#include <algorithm>
+#include <utility>
+
+
+
+namespace user {
+  using namespace ntt;
+  //using vector_t = Kokkos::View<real_t[3]>;
+  template <Dimension D>
+  struct InitFields {
+    /*
+      Sets up magnetic and electric field components for the simulation.
+      Must satisfy E = -v x B for Lorentz Force to be zero.
+
+      @param bmag: magnetic field scaling
+      @param btheta: magnetic field polar angle
+      @param bphi: magnetic field azimuthal angle
+      @param drift_ux: drift velocity in the x direction
+    */
+    InitFields(real_t bmag, real_t bmag_lb, real_t btheta, real_t bphi, real_t drift_ux, real_t global_min, real_t global_max)
+      : Bmag { bmag }
+      , Bmag_lb {bmag_lb}
+      , Btheta { btheta * static_cast<real_t>(convert::deg2rad) }
+      , Bphi { bphi * static_cast<real_t>(convert::deg2rad) }
+      , Vx { -drift_ux }
+      , global_min {global_min}
+      , global_max {global_max} {}
+    // magnetic field components
+    Inline auto bx1(const coord_t<D>& x) const -> real_t {
+      // To ensure the left match boundary is consistent with the jump condition
+      if (x[0] < global_min+ 0.05 * (global_max - global_min))
+        return Bmag_lb * math::cos(Btheta);     // theta = pi/2, phi = 0, such that B only has Bz. 
+      return Bmag * math::cos(Btheta);    
+    }
+
+    Inline auto bx2(const coord_t<D>& x) const -> real_t {
+      if (x[0] < global_min+ 0.05 * (global_max - global_min))
+      	return Bmag_lb * math::sin(Btheta) * math::sin(Bphi);
+      return Bmag * math::sin(Btheta) * math::sin(Bphi);
+    }
+
+    Inline auto bx3(const coord_t<D>& x) const -> real_t {
+      if (x[0] < global_min+ 0.05 * (global_max - global_min))
+      	return Bmag_lb * math::sin(Btheta) * math::cos(Bphi);
+      return Bmag * math::sin(Btheta) * math::cos(Bphi);
+    }
+
+    // electric field components
+    Inline auto ex1(const coord_t<D>& x) const -> real_t {
+      if (x[0] < global_min+ 0.05 * (global_max - global_min))
+          return ZERO;
+      return ZERO;
+    }
+
+    Inline auto ex2(const coord_t<D>&  x) const -> real_t {
+      if (x[0] < global_min+ 0.05 * (global_max - global_min))
+      	return Vx / 4.0 * Bmag_lb * math::sin(Btheta) * math::cos(Bphi);
+      return Vx * Bmag * math::sin(Btheta) * math::cos(Bphi);
+    }
+
+    Inline auto ex3(const coord_t<D>& x) const -> real_t {
+      if (x[0] < global_min + 0.05 * (global_max - global_min))
+      	return -Vx / 4.0 * Bmag_lb * math::sin(Btheta) * math::sin(Bphi);
+      return -Vx * Bmag * math::sin(Btheta) * math::sin(Bphi);
+    }
+
+  private:
+    const real_t Btheta, Bphi, Vx, Bmag, global_min, global_max, Bmag_lb;
+  };
+
+
+    inline auto init_pool(int seed) -> unsigned int {
+        if (seed < 0) {
+        unsigned int new_seed = static_cast<unsigned int>(rand());
+    #if defined(MPI_ENABLED)
+        MPI_Bcast(&new_seed, 1, MPI_UNSIGNED, MPI_ROOT_RANK, MPI_COMM_WORLD);
+    #endif // MPI_ENABLED
+        return new_seed;
+        } else {
+        return static_cast<unsigned int>(seed);
+        }
+    }
+
+
+
+
+  template <SimEngine::type S, class M>
+  struct PGen : public arch::ProblemGenerator<S, M> {
+    // compatibility traits for the problem generator
+    static constexpr auto engines { traits::compatible_with<SimEngine::SRPIC>::value };
+    static constexpr auto metrics { traits::compatible_with<Metric::Minkowski>::value };
+    static constexpr auto dimensions {
+      traits::compatible_with<Dim::_1D, Dim::_2D, Dim::_3D>::value
+    };
+
+    // for easy access to variables in the child class
+    using arch::ProblemGenerator<S, M>::D;
+    using arch::ProblemGenerator<S, M>::C;
+    using arch::ProblemGenerator<S, M>::params;
+
+    // domain properties
+    const real_t  global_xmin, global_xmax;
+    // gas properties
+    const real_t  drift_ux, temperature, temperature_ratio;  //, filling_fraction, filling_fraction_upstream;
+    // injector properties
+    const real_t  injection_start, dt, average_coeff;
+    const int     injection_frequency;
+    // magnetic field properties
+    real_t        Btheta, Bphi, Bmag, Bmag_lb, shock_filling_fraction, Lsh;
+    real_t        nu0, nu_coeff;
+    InitFields<D> init_flds;
+    array_t<real_t*> cbuff, cbuff2, cbuff3;
+    const int                        random_seed;
+    random_number_pool_t             random_pool;
+    const bool DEBUG;
+    bool is_resuming=false;
+    real_t x_wait, x_wait_l, wait_offset;
+
+
+
+    inline PGen(const SimulationParams& p, const Metadomain<S, M>& global_domain)
+      : arch::ProblemGenerator<S, M> { p }
+      , global_xmin { global_domain.mesh().extent(in::x1).first }
+      , global_xmax { global_domain.mesh().extent(in::x1).second }
+      , wait_offset {p.template get<real_t>("setup.wait_offset", 5.0)}
+      , drift_ux { p.template get<real_t>("setup.drift_ux") } // the magnitude of upstream drift velocity
+      , temperature { p.template get<real_t>("setup.temperature") } 
+      , temperature_ratio { p.template get<real_t>("setup.temperature_ratio") }
+      , Bmag { p.template get<real_t>("setup.Bmag", ZERO) }   // the upstream magnetic field
+      , Bmag_lb { p.template get<real_t>("setup.Bmag_lb", ZERO) } // the magnetic field at left (downstream) boundary
+      , Btheta { p.template get<real_t>("setup.Btheta", ZERO) } 
+      , Bphi { p.template get<real_t>("setup.Bphi", ZERO) }
+      , init_flds { Bmag, Bmag_lb, Btheta, Bphi, drift_ux , global_xmin, global_xmax} 
+      , injection_start { p.template get<real_t>("setup.injection_start", 0.0) }
+      , injection_frequency { p.template get<int>("setup.injection_frequency", 100) }
+      , dt { p.template get<real_t>("algorithms.timestep.dt")}
+      , average_coeff { p.template get<real_t>("setup.average_coeff", 0.01)} // running smooth, X_avg_1 = X_avg * (1-coeff) + coeff * X
+      , shock_filling_fraction {p.template get<real_t>("setup.shock_filling_fraction",0.2)} // the relative location of the shock front
+      , Lsh {p.template get<real_t>("setup.Lsh")} // the scale of shock transition layer
+      , nu0 {p.template get<real_t>("setup.nu0")} // the scattering frequency of ions
+      , nu_coeff {p.template get<real_t>("setup.nu_coeff", 1.0)}
+      , random_seed { p.template get<int>("setup.seed", -1) } 
+      , random_pool { init_pool(random_seed) }
+      , DEBUG {p.template get<bool>("setup.DEBUG")} 
+      , is_resuming {p.template get<bool>("checkpoint.is_resuming")} { // if is resuming, the smoothed quantities need to be initialized again
+
+
+}
+
+    inline PGen() {}
+
+    auto MatchFields(real_t time) const -> InitFields<D> {
+      return init_flds;
+    }
+
+    auto FixFieldsConst(const bc_in&, const em& comp) const
+      -> std::pair<real_t, bool> {
+      if (comp == em::ex1) {
+        return { init_flds.ex1({ ZERO }), true };
+      } else if (comp == em::ex2) {
+        return { ZERO, true };
+      } else if (comp == em::ex3) {
+        return { ZERO, true };
+      } else if (comp == em::bx1) {
+        return { init_flds.bx1({ ZERO }), true };
+      } else if (comp == em::bx2) {
+        return { init_flds.bx2({ ZERO }), true };
+      } else if (comp == em::bx3) {
+        return { init_flds.bx3({ ZERO }), true };
+      } else {
+        raise::Error("Invalid component", HERE);
+        return { ZERO, false };
+      }
+    }
+
+    inline void InitPrtls(Domain<S, M>& local_domain) {
+    }
+
+    // Custom output
+    void CustomFieldOutput(const std::string&    name,
+                         ndfield_t<M::Dim, 6> buffer,
+                         index_t              index,
+                         timestep_t,
+                         simtime_t,
+                         const Domain<S, M>& domain) {
+     // EM components smoothed by time
+     if (name == "AvgEx") {
+        if constexpr (D == Dim::_1D) {
+              Kokkos::deep_copy(Kokkos::subview(buffer,Kokkos::ALL, index), cbuff);
+        }
+     } 
+     if (name == "AvgEy") {
+        if constexpr (D == Dim::_1D) {
+              Kokkos::deep_copy(Kokkos::subview(buffer,Kokkos::ALL, index), cbuff2);
+        }
+     } 
+     if (name == "AvgBz") {
+        if constexpr (D == Dim::_1D) {
+              Kokkos::deep_copy(Kokkos::subview(buffer,Kokkos::ALL, index), cbuff3);
+        }
+     } 
+    
+     // To test the normalization of the EM field
+     if (name=="JptEx"){
+        if constexpr (M::Dim == Dim::_1D) {
+           const auto& mesh = domain.mesh;
+           const auto& EM = domain.fields.em;
+           Kokkos::parallel_for(
+           "MyField",
+           mesh.rangeActiveCells(),
+           Lambda(index_t i1) {
+              buffer(i1, index) = EM(i1, em::ex1);
+           });
+     }
+    } 
+    } // CustonFieldOutput
+    
+
+    void CustomPostStep(timestep_t step, simtime_t time, Domain<S, M>& domain) {
+      const auto& mesh = domain.mesh;
+      // loop over prtl species
+      // check if the injector should be active
+      bool PRINT=false;
+      if (DEBUG){
+          //if (step % injection_frequency == 0) {
+            PRINT=true;
+          //}
+      }
+
+      array_t<int> prtl_to_inject("Number of prtls to inject");
+      array_h_t<int> prtl_to_inject_h("Number of prtls to inject (on device)");
+      // prtl_to_inject_h() = static_cast<int>(ZERO);
+      // prtl_to_inject() = static_cast<int>(ZERO);
+      Kokkos::deep_copy(prtl_to_inject, ZERO);
+
+      x_wait = global_xmax - wait_offset;
+      x_wait_l = global_xmin + wait_offset;
+      
+      // Apply stochastic scattering 
+      for (auto& species : domain.species) {
+          Kokkos::parallel_for(
+             "Scatter and Inertial term",
+             species.rangeActiveParticles(),
+             kernel::mcp::UpdateVelKernel<M, D>(
+                 domain.mesh.metric,
+                 species.i1, species.dx1, species.ux1, species.ux2, species.ux3, species.pld_r, species.pld_i,
+                 species.tag, species.weight, species.charge(), species.mass(), domain.species[1].mass(), time, dt,  //domain.mesh.metric,
+                 shock_filling_fraction,
+                 global_xmin,
+                 global_xmax,
+                 drift_ux,
+                 Lsh,
+                 math::abs(Bmag * math::sin(Btheta)),
+                 nu0,
+                 nu_coeff,
+                 x_wait,
+                 x_wait_l,
+                 prtl_to_inject,
+                 domain.random_pool, 
+                 PRINT
+                 ));
+         }
+      
+      // deep copy the calculated number of prtls to host
+      Kokkos::deep_copy(prtl_to_inject_h, prtl_to_inject);
+
+      // compute the mean electric field Ex
+      if ((step == 0) || (is_resuming)){ // initialize cbuff value
+        if constexpr (D == Dim::_1D) {
+            cbuff = array_t<real_t*>("cbuff", domain.mesh.n_all(in::x1));
+            cbuff2 = array_t<real_t*>("cbuff2", domain.mesh.n_all(in::x1));
+            cbuff3 = array_t<real_t*>("cbuff3", domain.mesh.n_all(in::x1));
+            auto cbuff_loc = cbuff;
+            auto cbuff_loc2 = cbuff2; 
+      	    Kokkos::parallel_for(
+                 "FillCbuff",
+                 mesh.rangeActiveCells(),
+                 KOKKOS_LAMBDA(index_t i1) {
+                       cbuff_loc(i1) = 0.0;
+                       cbuff_loc2(i1)= 0.0; 
+                  });    
+        }
+        is_resuming = false;
+      }
+       // To avoid warnings
+       auto cbuff_loc = cbuff; 
+       auto cbuff_loc2 = cbuff2; 
+       auto cbuff_loc3 = cbuff3; 
+       const auto EB = domain.fields.em;
+
+       // updating average
+        if constexpr (D == Dim::_1D) {
+             const auto coeff = average_coeff;
+             if (step < 100){      // Not smoothing for the initial few steps
+                 Kokkos::parallel_for(
+                     "average Ex",
+                     mesh.rangeActiveCells(),
+                     KOKKOS_LAMBDA(index_t i1){
+                         cbuff_loc(i1) = EB(i1, em::ex1);
+                         cbuff_loc2(i1) = EB(i1, em::ex2);
+                         cbuff_loc3(i1) = EB(i1, em::bx3);
+                     });
+             }
+             else {
+                 Kokkos::parallel_for(
+                     "average Ex",
+                     mesh.rangeActiveCells(),
+                     KOKKOS_LAMBDA(index_t i1){
+                           cbuff_loc(i1) = cbuff_loc(i1) * (1.0-coeff)+ EB(i1, em::ex1) * coeff;
+                           cbuff_loc2(i1) = cbuff_loc2(i1) * (1.0-coeff)+ EB(i1, em::ex2) * coeff;
+                           cbuff_loc3(i1) = cbuff_loc3(i1) * (1.0-coeff)+ EB(i1, em::bx3) * coeff;
+
+                     }
+                  );
+        }}
+        // 2D and 3D not implemented
+        if constexpr (D == Dim::_2D) {
+        }
+        if constexpr (D == Dim::_3D) {
+        }      
+
+      
+      auto xmax = x_wait;
+      // compute the beginning of the injected region
+      auto xmin = xmax - injection_frequency * dt * drift_ux / math::sqrt(drift_ux * drift_ux + ONE);//* (injector_velocity + drift_ux); 
+      if (xmin <= global_xmin) {
+          xmin = global_xmin;
+      }
+
+      {// Reset fields for the 0d leaky box
+      // define indice range to reset fields
+      boundaries_t<bool> incl_ghosts_wait;
+      for (auto d = 0; d < M::Dim; ++d) {
+        incl_ghosts_wait.push_back({ false, false });
+      }
+
+      // define box to reset fields
+      boundaries_t<real_t> purge_box_wait;
+      // loop over all dimension
+      for (auto d = 0u; d < M::Dim; ++d) {
+        if (d == 0) {
+          purge_box_wait.push_back({ xmax, global_xmax });
+        } else {
+          purge_box_wait.push_back(Range::All);
+        }
+      }
+
+      const auto extent_wait = domain.mesh.ExtentToRange(purge_box_wait, incl_ghosts_wait);
+      tuple_t<std::size_t, M::Dim> x_wait_min { 0 }, x_wait_max { 0 };
+      for (auto d = 0; d < M::Dim; ++d) {
+        x_wait_min[d] = extent_wait[d].first;
+        x_wait_max[d] = extent_wait[d].second;
+      }
+      
+
+      // Reset fields for left boundary
+      boundaries_t<bool> incl_ghosts_wait_l;
+      for (auto d = 0; d < M::Dim; ++d) {
+        incl_ghosts_wait_l.push_back({ false, false });
+      }
+
+      // define box to reset fields
+      boundaries_t<real_t> purge_box_wait_l;
+      // loop over all dimension
+      for (auto d = 0u; d < M::Dim; ++d) {
+        if (d == 0) {
+          purge_box_wait_l.push_back({ global_xmin, x_wait_l});
+        } else {
+          purge_box_wait_l.push_back(Range::All);
+        }
+      }
+
+      const auto extent_wait_l = domain.mesh.ExtentToRange(purge_box_wait_l, incl_ghosts_wait_l);
+      tuple_t<std::size_t, M::Dim> x_wait_l_min { 0 }, x_wait_l_max { 0 };
+      for (auto d = 0; d < M::Dim; ++d) {
+        x_wait_l_min[d] = extent_wait_l[d].first;
+        x_wait_l_max[d] = extent_wait_l[d].second;
+      }
+
+      Kokkos::parallel_for("ResetFieldsLeft",
+                           CreateRangePolicy<M::Dim>(x_wait_l_min, x_wait_l_max),
+                           arch::SetEMFields_kernel<decltype(init_flds), S, M> {
+                             domain.fields.em,
+                             init_flds,
+                             domain.mesh.metric });
+      }
+
+
+      // same maxwell distribution as above
+      const auto temperatures = std::make_pair(temperature,
+                                              temperature_ratio * temperature);
+      const auto drifts       = std::make_pair(
+        std::vector<real_t> { -drift_ux, ZERO, ZERO },
+        std::vector<real_t> { -drift_ux, ZERO, ZERO });
+      // Inject Prtls to keep charge neutral
+      if constexpr (M::Dim == Dim::_1D){
+        const auto maxwellian_1 = arch::Maxwellian<S, M>(domain.mesh.metric,
+                                                     domain.random_pool,
+                                                     temperature / domain.species[0].mass(),
+                                                     drifts.first);
+        const auto maxwellian_2 = arch::Maxwellian<S, M>(domain.mesh.metric,
+                                                     domain.random_pool,
+                                                     temperature * temperature_ratio / domain.species[1].mass(),
+                                                     drifts.second);
+      
+        if (PRINT){
+          Kokkos::printf("Finished maxwellian def\n");
+          // prtl_to_inject_h() = 10;
+          Kokkos::printf("prtl to inject: %d\n", prtl_to_inject_h());
+          Kokkos::printf("xmax and xwait: %.2lf %.2lf\n", global_xmax, x_wait);
+          Kokkos::printf("xmin and xmax: %.2lf %.2lf\n", xmin, xmax);
+          Kokkos::printf("npldi : %d npldr: %d\n", domain.species[0].npld_i(),domain.species[0].npld_r());
+          Kokkos::printf("npldi : %d npldr: %d\n", domain.species[1].npld_i(),domain.species[1].npld_r());
+
+          Kokkos::printf("electron npldi : %d npldi: %d\n", domain.species[0].pld_i.extent(0),domain.species[0].pld_i.extent(1));
+          Kokkos::printf("ion      npldi : %d npldi: %d\n", domain.species[1].pld_i.extent(0),domain.species[1].pld_i.extent(1));
+        }
+
+
+        coord_t<Dim::_1D> x_wait_Cd {ZERO};
+        coord_t<Dim::_1D> x_wait_Ph {ZERO};
+        x_wait_Ph[0] = static_cast<real_t>(x_wait);
+        domain.mesh.metric.template convert<Crd::Ph,Crd::Cd>(x_wait_Ph, x_wait_Cd);
+
+        // For the right boundary, we need to injected the particls slightly on the left side of the waiting zone, so
+        // it will not initially appear in the separated box
+        int x_targ = static_cast<int>(x_wait_Cd[0]);
+        prtldx_t dx_targ= static_cast<prtldx_t>(ZERO);
+
+
+        // If there are extra prtls to inject to conserve charge neutrality, inject these prtls. 
+        // A kernel of prtl injection of certain species, certain number 
+        //     with certain energy distribution at certain location is implemented. 
+        if (prtl_to_inject_h() > 0){
+          // inject ions
+          auto& species = domain.species[1];
+          
+          if (PRINT){Kokkos::printf("Setting npart to %d\n", species.npart()+ math::abs(prtl_to_inject_h()));}
+          species.set_npart(species.npart() + math::abs(prtl_to_inject_h()));
+          if (PRINT){Kokkos::printf("Now nprtl %d\n", species.npart());}
+
+          if (species.use_tracking()){
+            species.set_counter(species.counter() + math::abs(prtl_to_inject_h()));
+          }
+
+          Kokkos::parallel_for("Inject_ions",
+                            math::abs(prtl_to_inject_h()),
+                            kernel::injector::InjectSinglePrtls_kernel<M, decltype(maxwellian_2)>(
+                                species.i1,species.i2,species.i3,
+                                species.dx1,species.dx2,species.dx3,
+                                species.ux1,species.ux2,species.ux3,
+                                species.phi,species.weight, species.tag,
+                                species.pld_i,
+                                math::abs(prtl_to_inject_h()),
+                                maxwellian_2,
+                                x_targ,
+                                dx_targ,
+                                species.counter(),
+                                species.npart(),
+                                species.maxnpart(),
+                                species.use_tracking(),
+                                domain.index()
+                                ));
+          if (PRINT){
+              Kokkos::printf("Finished Prtl Injection, npart = %d\n", species.npart());
+          }
+        }
+        else if (prtl_to_inject_h() < 0){
+          // inject electrons
+          auto& species = domain.species[0];
+
+          if (PRINT){Kokkos::printf("Setting npart to %d\n", species.npart()+ math::abs(prtl_to_inject_h()));}
+          species.set_npart(species.npart() + math::abs(prtl_to_inject_h()));
+          if (PRINT){Kokkos::printf("Now nprtl %d\n", species.npart());}
+
+          if (species.use_tracking()){
+            species.set_counter(species.counter() + math::abs(prtl_to_inject_h()));
+          }
+
+          Kokkos::parallel_for("Inject_electrons",
+                            math::abs(prtl_to_inject_h()),
+                            kernel::injector::InjectSinglePrtls_kernel<M, decltype(maxwellian_2)>(
+                                species.i1,species.i2,species.i3,
+                                species.dx1,species.dx2,species.dx3,
+                                species.ux1,species.ux2,species.ux3,
+                                species.phi,species.weight, species.tag,
+                                species.pld_i,
+                                math::abs(prtl_to_inject_h()),
+                                maxwellian_1,
+                                x_targ,
+                                dx_targ,
+                                species.counter(),
+                                species.npart(),
+                                species.maxnpart(),
+                                species.use_tracking(),
+                                domain.index()
+                                ));
+          
+        }
+        
+        if (PRINT){
+          Kokkos::printf("Finished first pgen loop\n");
+          Kokkos::printf("Try to fence\n");
+          Kokkos::fence();
+          Kokkos::printf("Fence successful\n");
+        }
+
+        
+      } // if constexpr dim 1d
+
+      // check if the injector should be active
+      if (step % injection_frequency != 0) {
+        return;
+      }                                                                        
+
+      /*
+          Inject slab of fresh plasma
+      */
+
+      // define box to inject into
+      boundaries_t<real_t> inj_box;
+      // loop over all dimension
+      for (auto d = 0u; d < M::Dim; ++d) {
+        if (d == 0) {
+          inj_box.push_back({ xmin, xmax });
+        } else {
+          inj_box.push_back(Range::All);
+        }
+      }
+
+      if (PRINT){
+          Kokkos::printf("Defined Box\n");
+      }
+
+      if constexpr (M::Dim == Dim::_1D){
+        arch::InjectUniformMaxwellians<S, M>(params,
+                                           domain,
+                                           ONE,
+                                           temperatures,
+                                           { 1, 2 },
+                                           drifts,
+                                           false,
+                                           inj_box);
+      }
+      
+      if (PRINT){
+          Kokkos::printf("Maxwellian Injected\n");
+      }
+
+    } // custom post step
+  }; // kernel
+
+} // namespace user
+#endif

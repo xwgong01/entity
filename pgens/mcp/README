@@ -1,0 +1,7 @@
+The high energy prtls escaping from upstream will be marked with the tag "idle". The position and velocity of which will not be updated, and their charge will be ignored. 
+
+Once they are marked as idle, a returning timescale will be calculated. Every timestep, the velocity will be subtracted by dt. Once remaining time < 0, idle prtls will be re-injected into the box, with v=-v. Every time prtl is marked as idle, a thermal prtl with u = u_drift will be injected to keep neutrality. Every time prtl is re-injected, a thermal prtl with opposite charge will be injected. This should be saved in ckpt. This will ensure prtls reinjected have the same ID.  
+
+What is modified: 
+	1. Adding a prtl tag type: idle in global/global.h
+	 
