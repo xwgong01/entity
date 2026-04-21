@@ -7,6 +7,7 @@ build*/
 bin/
 compile_commands.json
 .cache/
+FldMCP/
 
 # Python files
 *.ipynb
