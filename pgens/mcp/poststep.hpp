@@ -177,9 +177,9 @@ Inline void rotate(real_t v1, real_t v2, real_t v3,
         v_new3 = term13+term23+term33;
         normv = math::sqrt(v1*v1+v2*v2+v3*v3); 
         normvnew = math::sqrt(v_new1*v_new1+v_new2*v_new2+v_new3*v_new3);
-        res1 = v_new1 * normv / normrvnew;
-        res2 = v_new2 * normv / normrvnew;
-        res3 = v_new3 * normv / normrvnew;
+        res1 = v_new1 * normv / normvnew;
+        res2 = v_new2 * normv / normvnew;
+        res3 = v_new3 * normv / normvnew;
     }
 
 //Lorentz transformation

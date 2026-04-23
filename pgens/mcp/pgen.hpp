@@ -194,8 +194,45 @@ namespace user {
       }
     }
 
-    inline void InitPrtls(Domain<S, M>& local_domain) {
+inline void InitPrtls(Domain<S, M>& domain) {
+
+      // minimum and maximum position of particles
+      real_t xg_min = global_xmin;
+      //real_t xg_max = global_xmin + filling_fraction * (global_xmax - global_xmin);
+      real_t xg_max = global_xmax - wait_offset;
+
+      // define box to inject into
+      boundaries_t<real_t> box;
+      // loop over all dimensions
+      for (auto d { 0u }; d < (unsigned int)M::Dim; ++d) {
+        // compute the range for the x-direction
+        if (d == static_cast<decltype(d)>(in::x1)) {
+          box.push_back({ xg_min, xg_max });
+        } else {
+          // inject into full range in other directions
+          box.push_back(Range::All);
+        }
+      }
+
+      // define temperatures of species
+      const auto temperatures = std::make_pair(temperature,
+                                               temperature_ratio * temperature);
+      // define drift speed of species
+      const auto drifts       = std::make_pair(
+        std::vector<real_t> { -drift_ux, ZERO, ZERO },
+        std::vector<real_t> { -drift_ux, ZERO, ZERO });
+
+      // inject particles
+      arch::InjectUniformMaxwellians<S, M>(params,
+                                           domain,
+                                           ONE,
+                                           temperatures,
+                                           { 1, 2 },
+                                           drifts,
+                                           false,
+                                           box);
     }
+
 
     // Custom output
     void CustomFieldOutput(const std::string&    name,
