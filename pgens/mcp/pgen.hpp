@@ -128,7 +128,7 @@ namespace user {
     const int     injection_frequency;
     // magnetic field properties
     real_t        Btheta, Bphi, Bmag, Bmag_lb, shock_filling_fraction, Lsh;
-    real_t        nu0, nu_coeff;
+    real_t        nu0, nu_coeff, scatter_idx;
     InitFields<D> init_flds;
     array_t<real_t*> cbuff, cbuff2, cbuff3;
     const int                        random_seed;
@@ -160,6 +160,7 @@ namespace user {
       , Lsh {p.template get<real_t>("setup.Lsh")} // the scale of shock transition layer
       , nu0 {p.template get<real_t>("setup.nu0")} // the scattering frequency of ions
       , nu_coeff {p.template get<real_t>("setup.nu_coeff", 1.0)}
+      , scatter_idx {p.template get<real_t>("setup.scatter_idx", 0.0)} 
       , random_seed { p.template get<int>("setup.seed", -1) } 
       , random_pool { init_pool(random_seed) }
       , DEBUG {p.template get<bool>("setup.DEBUG")} 
@@ -311,6 +312,7 @@ inline void InitPrtls(Domain<S, M>& domain) {
                  math::abs(Bmag * math::sin(Btheta)),
                  nu0,
                  nu_coeff,
+                 scatter_idx,
                  x_wait,
                  x_wait_l,
                  prtl_to_inject,

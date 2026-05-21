@@ -56,13 +56,13 @@ namespace kernel::mcp {
     array_t<npart_t**>            pld_i;
     array_t<short*>               tag;
     array_t<real_t*>              weight;
-    const real_t                  charge;
+    const real_t                  charge; 
     array_t<int>                  prtl_to_inject;
     random_number_pool_t          random_pool;
     const real_t  dt, mp, mi;
     simtime_t time;
     real_t shock_filling_fraction, global_min, global_max, drift_ux, Lsh;
-    real_t nu0, nu_coeff,Bmag;
+    real_t nu0, nu_coeff,Bmag , scatter_idx;
     kernel::weibel::WeibelKernel weibel_kernel;
     const real_t x_wait, x_wait_l;
     bool DEBUG;
@@ -92,6 +92,7 @@ namespace kernel::mcp {
                   real_t                         Bmag,
                   real_t                         nu0,
                   real_t                         nu_coeff,
+                  real_t                         scatter_idx,
                   real_t                         x_wait,
                   real_t                         x_wait_l,
                   array_t<int>                   prtl_to_inject,
@@ -116,6 +117,7 @@ namespace kernel::mcp {
       , drift_ux {drift_ux}
       , weight {weight}
       , Lsh {Lsh}
+      , scatter_idx {scatter_idx}
       , Bmag {Bmag}
       , nu0 {nu0}
       , x_wait {x_wait}
@@ -228,7 +230,6 @@ Inline void operator()(index_t p) const {
          
         gm = math::sqrt((u1*u1+u2*u2+u3*u3) + 1.); // Particle Lorentz factor in lab frame
 
-        nu = nu0 * mi / mp * ((mi == mp) ? 1.0:nu_coeff); // TODO: define the model of scattering freq.
 
         u_weibel = weibel_kernel.getux(x_prtl);
         duwdx = weibel_kernel.getdudx(x_prtl);
@@ -239,6 +240,9 @@ Inline void operator()(index_t p) const {
 
         boostVel(u1, u2, u3, brel, lfrel, uw1,uw2,uw3);
         gmw = math::sqrt((uw1*uw1+uw2*uw2+uw3*uw3) +1.); // Particle Lorentz factor in Weibel frame
+       
+	 
+	nu = nu0 * mi / mp * ((mi == mp) ? 1.0:nu_coeff) / math::pow(gmw, scatter_idx); // TODO: define the model of scattering freq.
         
 	// ----------------- scatter --------------
 	// random generate k, rotation angle and normalize:
