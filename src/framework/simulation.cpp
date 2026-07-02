@@ -96,7 +96,7 @@ namespace ntt {
       m_params.setImmutableParams(raw_checkpoint_params);
       m_params.setMutableParams(raw_params);
       m_params.setCheckpointParams(true, checkpoint_step, start_time);
-      m_params.setSetupParams(raw_checkpoint_params);
+      m_params.setSetupParams(raw_params);
     } else {
       logger::Checkpoint("Defining new params", HERE);
       m_params.setImmutableParams(raw_params);

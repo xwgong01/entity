@@ -1,0 +1,97 @@
+[simulation]
+  name    = "ma40"
+  engine  = "srpic"
+  runtime = 50000.0  # should be comparable with the shock formation time
+
+  [simulation.domain]
+    decomposition = [1, -1, -1]
+
+[grid]
+  resolution = [20480, 2048]
+  extent     = [[0.0, 4096.0], [-204.8, 204.8]]
+
+  [grid.metric]
+    metric = "minkowski"
+
+  [grid.boundaries]
+    fields    = [["CONDUCTOR", "MATCH"], ["PERIODIC"]]
+    particles = [["REFLECT", "ABSORB"], ["PERIODIC"]]
+
+  [grid.boundaries.match]
+    ds = 1.0 # ->  0.01 * box + injection_frequency * dt + therm_offset
+
+[scales]
+  larmor0    = 1.0
+  skindepth0 = 1.0
+
+[algorithms]
+  current_filters = 8
+
+  [algorithms.timestep]
+    CFL = 0.7
+
+[particles]
+  ppc0 = 32.0
+
+  [[particles.species]]
+    label    = "e-"
+    mass     = 1.0
+    charge   = -1.0
+    maxnpart = 5e7
+    tracking = true
+    n_payloads_real = 6
+    n_payloads_int = 1
+
+  [[particles.species]]
+    label    = "p+"
+    mass     = 400.0
+    charge   = 1.0
+    maxnpart = 5e7
+    tracking = true
+    n_payloads_int = 1
+
+[setup]
+  drift_ux    = 0.075         # speed towards the wall [c]
+  temperature = 0.00005        # temperature of maxwell distribution [kB T / (m_i c^2)]
+  temperature_ratio = 1.0    # temperature ratio of electrons to protons
+  Bmag = 0.03536              # magnetic field strength as fraction of magnetisation
+  Btheta = 90.0              # magnetic field angle in the plane
+  Bphi = 90.0                 # magnetic field angle out of plane
+  filling_fraction = 0.2     # fraction of the shock piston filled with plasma
+  injector_velocity = 0.2    # speed of injector [c]
+  injection_start = 0.0      # start time of moving injector
+  injection_frequency = 10
+  #alpha_therm = 1.0
+  #therm_offset = 1.0
+  #therm_scale = 10.0
+  random_track = true
+  x_track =  2048.0
+  x_track_offset = 20.0
+  interp_prtl = false
+
+  
+[output]
+  interval_time = 10000.0
+  format        = "BPFile"
+  
+  [output.fields]
+    quantities = ["N_1", "Vi_2"]
+    custom = ["avgE1","avgE2","avgE3","avgB1","avgB2","avgB3"]
+    downsampling = 1
+  
+  [output.particles]
+    enable = true
+    stride = 100 
+ 
+  [output.spectra]
+    enable = false
+  
+[diagnostics]
+  log_level = "WARNING"
+  blocking_timers = true
+  interval = 50
+
+[checkpoint]
+  interval = 250000
+  keep = -1
+  walltime = "23:40:00"
