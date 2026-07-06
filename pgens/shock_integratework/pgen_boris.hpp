@@ -351,12 +351,12 @@ namespace user {
                 if (tag(p) == ParticleTag::dead) {
                   return;
                 }
-                pld_r(p, 0) = ZERO;
-                pld_r(p, 1) = ZERO;
-                pld_r(p, 2) = ZERO;
-                pld_r(p, 3) = ZERO;
-                pld_r(p, 4) = ZERO;
-                pld_r(p, 5) = ZERO;
+                pld_r(p, 0) = 0.0;
+                pld_r(p, 1) = 0.0;
+                pld_r(p, 2) = 0.0;
+                pld_r(p, 3) = 0.0;
+                pld_r(p, 4) = 0.0;
+                pld_r(p, 5) = 0.0;
                 return;
               });
           }
@@ -372,12 +372,12 @@ namespace user {
             "FillCbuff_runningavg",
             domain.mesh.rangeActiveCells(),
             Lambda(cellidx_t i1, cellidx_t i2) {
-	      cbuff_loc(i1, i2, 0) = std::isfinite(cbuff_loc(i1, i2, 0)) ? cbuff_loc(i1, i2, 0): ZERO;
-	      cbuff_loc(i1, i2, 1) = std::isfinite(cbuff_loc(i1, i2, 1)) ? cbuff_loc(i1, i2, 1): ZERO;
-	      cbuff_loc(i1, i2, 2) = std::isfinite(cbuff_loc(i1, i2, 2)) ? cbuff_loc(i1, i2, 2): ZERO;
-	      cbuff_loc(i1, i2, 3) = std::isfinite(cbuff_loc(i1, i2, 3)) ? cbuff_loc(i1, i2, 3): ZERO;
-	      cbuff_loc(i1, i2, 4) = std::isfinite(cbuff_loc(i1, i2, 4)) ? cbuff_loc(i1, i2, 4): ZERO;
-	      cbuff_loc(i1, i2, 5) = std::isfinite(cbuff_loc(i1, i2, 5)) ? cbuff_loc(i1, i2, 5): ZERO;
+	      cbuff_loc(i1, i2, 0) = std::isfinite(cbuff_loc(i1, i2, 0)) ? cbuff_loc(i1, i2, 0): 0.0;
+	      cbuff_loc(i1, i2, 1) = std::isfinite(cbuff_loc(i1, i2, 1)) ? cbuff_loc(i1, i2, 1): 0.0;
+	      cbuff_loc(i1, i2, 2) = std::isfinite(cbuff_loc(i1, i2, 2)) ? cbuff_loc(i1, i2, 2): 0.0;
+	      cbuff_loc(i1, i2, 3) = std::isfinite(cbuff_loc(i1, i2, 3)) ? cbuff_loc(i1, i2, 3): 0.0;
+	      cbuff_loc(i1, i2, 4) = std::isfinite(cbuff_loc(i1, i2, 4)) ? cbuff_loc(i1, i2, 4): 0.0;
+	      cbuff_loc(i1, i2, 5) = std::isfinite(cbuff_loc(i1, i2, 5)) ? cbuff_loc(i1, i2, 5): 0.0;
               
 	      cbuff_loc(i1, i2, 0) = cbuff_loc(i1, i2, 0) * (1.0 - avg_coeff_loc) +
                                      EB(i1, i2, em::ex1) * avg_coeff_loc;
@@ -439,53 +439,92 @@ namespace user {
 		xp_Cd[1] = static_cast<real_t>(i2(p)) + static_cast<real_t>(dx2(p)); 
 		mesh.metric.template transform_xyz<Idx::U, Idx::XYZ>(xp_Cd, e_interp, e0);
 		mesh.metric.template transform_xyz<Idx::U, Idx::XYZ>(xp_Cd, b_interp, b0);
-                
-		real_t bnorm = math::sqrt(NORM_SQR(b0[0],b0[1],b0[2]));
-                b0[0] = b0[0] / bnorm; 
-                b0[1] = b0[1] / bnorm; 
-                b0[2] = b0[2] / bnorm; 
+		auto ePhys = e0;
+		auto bPhys = b0;
 
                 real_t dwxpar, dwypar, dwzpar, dwxperp, dwyperp, dwzperp;
-		const real_t gm = math::sqrt(u1(p)*u1(p)+u2(p)*u2(p)+u3(p)*u3(p)+1.);
+		const real_t gm0 = math::sqrt(u1(p)*u1(p)+u2(p)*u2(p)+u3(p)*u3(p)+1);
+		real_t gm_tmp;
+                const real_t bnorm = math::sqrt(NORM_SQR(bPhys[0], bPhys[1],bPhys[2])); 
+		// Boris
+		real_t COEFF { dt_loc * HALF * (charge / mass) };
+                e0[0] *= COEFF;
+                e0[1] *= COEFF;
+                e0[2] *= COEFF;
+                vec_t<Dim::_3D> u0 { u1(p) + e0[0],
+                                     u2(p) + e0[1],
+                                     u3(p) + e0[2] };
+                
+          
+                COEFF *= ONE / math::sqrt(ONE + NORM_SQR(u0[0], u0[1], u0[2]));
+                gm_tmp =  math::sqrt(ONE + NORM_SQR(u0[0], u0[1], u0[2]));
+	        // dimensionless velocity for first half work	
+		auto beta0=  u0;
+		beta0[0] = HALF*(beta0[0] / gm_tmp + u1(p) / gm0);
+		beta0[1] = HALF*(beta0[1] / gm_tmp + u2(p) / gm0);
+		beta0[2] = HALF*(beta0[2] / gm_tmp + u3(p) / gm0);
+
+                b0[0] *= COEFF;
+                b0[1] *= COEFF;
+                b0[2] *= COEFF;
+                COEFF  = TWO / (ONE + NORM_SQR(b0[0], b0[1], b0[2]));
+          
+                const vec_t<Dim::_3D> us {
+                  (u0[0] + CROSS_x1(u0[0], u0[1], u0[2], b0[0], b0[1], b0[2])) * COEFF,
+                  (u0[1] + CROSS_x2(u0[0], u0[1], u0[2], b0[0], b0[1], b0[2])) * COEFF,
+                  (u0[2] + CROSS_x3(u0[0], u0[1], u0[2], b0[0], b0[1], b0[2])) * COEFF
+                };
+         
+	        // u_plus	
+                u0[0] += CROSS_x1(us[0], us[1], us[2], b0[0], b0[1], b0[2]);
+                u0[1] += CROSS_x2(us[0], us[1], us[2], b0[0], b0[1], b0[2]);
+                u0[2] += CROSS_x3(us[0], us[1], us[2], b0[0], b0[1], b0[2]);
+		auto beta1=  u0;
+	        gm_tmp =  math::sqrt(ONE + NORM_SQR(u0[0], u0[1], u0[2]));
 		
-                real_t Epar = (e0[0]*b0[0]+e0[1]*b0[1]+e0[2]*b0[2]);
-                const real_t COEFF = dt_loc * charge / mass;
+                // u_new
+		u0[0] += e0[0];
+                u0[1] += e0[1];
+                u0[2] += e0[2];
+		const real_t gm1 = math::sqrt(ONE + NORM_SQR(u0[0], u0[1], u0[2]));	
+	        
+		// dimensionless velocity for first half work	
+		beta1[0] = HALF*(beta1[0] / gm_tmp + u0[0] / gm1);
+		beta1[1] = HALF*(beta1[1] / gm_tmp + u0[1] / gm1);
+		beta1[2] = HALF*(beta1[2] / gm_tmp + u0[2] / gm1);
 
-		dwxpar = (u1(p) / gm) * Epar * b0[0] * COEFF;
-		dwypar = (u2(p) / gm) * Epar * b0[1] * COEFF;
-		dwzpar = (u3(p) / gm) * Epar * b0[2] * COEFF;
-		dwxperp =(u1(p) / gm) * (e0[0] - Epar * b0[0]) * COEFF;
-		dwyperp =(u2(p) / gm) * (e0[1] - Epar * b0[1]) * COEFF;
-		dwzperp =(u3(p) / gm) * (e0[2] - Epar * b0[2]) * COEFF;
-
-		const real_t gm_prev = math::sqrt(NORM_SQR(pld_r(p,0),pld_r(p,1),pld_r(p,2))+ONE);
-		real_t dwtot = (u1(p) * e0[0]+u2(p) * e0[1]+u3(p) * e0[2]) / gm * COEFF;
-		real_t dwtot_prev = (pld_r(p,0) * e0[0]+pld_r(p,1) * e0[1]+pld_r(p,2) * e0[2]) / gm_prev * COEFF;
-                // real_t dwpar  = dwxpar + dwypar + dwzpar;
-                // real_t dwperp = dwxperp + dwyperp + dwzperp;
-                // real_t closure = dwtot - dwpar - dwperp;
+                // end Boris
+	
+		// normalized
+		bPhys[0] = bPhys[0] / bnorm;
+		bPhys[1] = bPhys[1] / bnorm;
+		bPhys[2] = bPhys[2] / bnorm;
 		
-		// pld_r(p, 0) += math::isfinite(dwxpar) ? dwxpar:ZERO;
-                // pld_r(p, 1) += math::isfinite(dwypar) ? dwypar:ZERO;
-                // pld_r(p, 2) += math::isfinite(dwzpar) ? dwzpar:ZERO;
-                // pld_r(p, 3) += math::isfinite(dwxperp) ? dwxperp:ZERO;
-                // pld_r(p, 4) += math::isfinite(dwyperp) ? dwyperp:ZERO;
-                // pld_r(p, 5) += math::isfinite(dwzperp) ? dwzperp:ZERO;
+		// real_t Epar = (ePhys[0]*bPhys[0]+ePhys[1]*bPhys[1]+ePhys[2]*bPhys[2]);
 
+		// dwxpar = HALF*(beta0[0]+beta1[0]) * Epar * bPhys[0];
+		// dwypar = HALF*(beta0[1]+beta1[1])  * Epar * bPhys[1] ;
+		// dwzpar = HALF*(beta0[2]+beta1[2])  * Epar * bPhys[2] ;
+		// dwxperp =HALF*(beta0[0]+beta1[0])   * (ePhys[0] - Epar * bPhys[0]);
+		// dwyperp =HALF*(beta0[1]+beta1[1])  * (ePhys[1] - Epar * bPhys[1]);
+		// dwzperp =HALF*(beta0[2]+beta1[2]) * (ePhys[2] - Epar * bPhys[2]);
+	         
+                real_t Epar = (e0[0]*bPhys[0]+e0[1]*bPhys[1]+e0[2]*bPhys[2]);
 
-		pld_r(p, 0) = u1(p);
-                pld_r(p, 1) = u2(p);
-                pld_r(p, 2) = u3(p);
-                pld_r(p, 3) += dwtot;
-                pld_r(p, 4) += (dwtot_prev + dwtot) * HALF;
-                pld_r(p, 5) += gm-gm_prev;
+		dwxpar = (beta0[0]+beta1[0]) * Epar * bPhys[0];
+		dwypar = (beta0[1]+beta1[1]) * Epar * bPhys[1];
+		dwzpar = (beta0[2]+beta1[2]) * Epar * bPhys[2];
+		dwxperp =(beta0[0]+beta1[0]) * (e0[0] - Epar * bPhys[0]);
+		dwyperp =(beta0[1]+beta1[1]) * (e0[1] - Epar * bPhys[1]);
+		dwzperp =(beta0[2]+beta1[2]) * (e0[2] - Epar * bPhys[2]);
 
-	        // pld_r(p, 0) += math::isfinite(dwpar)   ? dwpar   : ZERO;
-                // pld_r(p, 1) += math::isfinite(dwperp)  ? dwperp  : ZERO;
-                // pld_r(p, 2) += math::isfinite(dwtot)   ? dwtot   : ZERO;
-                // pld_r(p, 3) += math::isfinite(closure) ? closure : ZERO;
-                // pld_r(p, 4) += ONE;
-                // pld_r(p, 5) += COEFF;   	
+                pld_r(p, 0) += math::isfinite(dwxpar) ? dwxpar:0.0;
+                pld_r(p, 1) += math::isfinite(dwypar) ? dwypar:0.0;
+                pld_r(p, 2) += math::isfinite(dwzpar) ? dwzpar:0.0;
+                pld_r(p, 3) += math::isfinite(dwxperp) ? dwxperp:0.0;
+                pld_r(p, 4) += math::isfinite(dwyperp) ? dwyperp:0.0;
+                pld_r(p, 5) += math::isfinite(dwzperp) ? dwzperp:0.0;
+		
 		return;
               });
           }

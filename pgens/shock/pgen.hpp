@@ -376,9 +376,15 @@ namespace user {
           // calculate interpolated EM field on electrons
           for (auto& s :
                { 1u }) { // only calculate the em fields interpolated for electrons
-            auto& species = domain.species[s - 1];
+	    auto& species = domain.species[s - 1];
             auto  pld_r   = species.pld_r;
             auto  tag     = species.tag;
+            auto& mesh    = domain.mesh;
+            auto  i1      = species.i1;
+            auto  i2      = species.i2;
+            auto  dx1     = species.dx1;
+            auto  dx2     = species.dx2;
+
             kernels::user::InterpolateKernel<M, D, 2u> Interpolator(species.i1,
                                                                     species.i2,
                                                                     species.i3,
@@ -393,14 +399,23 @@ namespace user {
                 if (tag(p) == ParticleTag::dead) {
                   return;
                 }
-                vec_t<Dim::_3D> e_interp, b_interp;
+		vec_t<Dim::_3D> e_interp {ZERO}, b_interp {ZERO};
+                vec_t<Dim::_3D> e0 {ZERO}, b0 {ZERO};
                 Interpolator.InterpolatedEMFields(p, e_interp, b_interp);
-                pld_r(p, 0) = e_interp[0];
-                pld_r(p, 1) = e_interp[1];
-                pld_r(p, 2) = e_interp[2];
-                pld_r(p, 3) = b_interp[0];
-                pld_r(p, 4) = b_interp[1];
-                pld_r(p, 5) = b_interp[2];
+
+                // Convert fields to physical unit
+                coord_t<D> xp_Cd {ZERO};
+                xp_Cd[0] = static_cast<real_t>(i1(p)) + static_cast<real_t>(dx1(p));
+                xp_Cd[1] = static_cast<real_t>(i2(p)) + static_cast<real_t>(dx2(p));
+                mesh.metric.template transform_xyz<Idx::U, Idx::XYZ>(xp_Cd, e_interp, e0);
+                mesh.metric.template transform_xyz<Idx::U, Idx::XYZ>(xp_Cd, b_interp, b0);
+
+                pld_r(p, 0) = e0[0];
+                pld_r(p, 1) = e0[1];
+                pld_r(p, 2) = e0[2];
+                pld_r(p, 3) = b0[0];
+                pld_r(p, 4) = b0[1];
+                pld_r(p, 5) = b0[2];
                 return;
               });
           }
