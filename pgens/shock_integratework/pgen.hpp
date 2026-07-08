@@ -106,6 +106,7 @@ namespace user {
     bool          first_step = true;
     bool          interp_prtl;
     array_t<real_t***> cbuff;
+    array_t<real_t***> EB_prev;
 
 
 
@@ -324,9 +325,14 @@ namespace user {
                                               domain.mesh.n_all(in::x2),
                                               6);
           auto cbuff_loc = cbuff;
+          EB_prev          = array_t<real_t***>("EBprerv",
+                                              domain.mesh.n_all(in::x1),
+                                              domain.mesh.n_all(in::x2),
+                                              6);
+          auto EB_prev_loc = EB_prev;
 	  
           Kokkos::parallel_for(
-            "FillCbuff",
+            "FillCbuffandEBPrev",
             domain.mesh.rangeActiveCells(),
             Lambda(cellidx_t i1, cellidx_t i2) {
               cbuff_loc(i1, i2, 0) = EB(i1, i2, em::ex1);
@@ -335,6 +341,12 @@ namespace user {
               cbuff_loc(i1, i2, 3) = EB(i1, i2, em::bx1);
               cbuff_loc(i1, i2, 4) = EB(i1, i2, em::bx2);
               cbuff_loc(i1, i2, 5) = EB(i1, i2, em::bx3);
+              EB_prev_loc(i1, i2, 0) = EB(i1, i2, em::ex1);
+              EB_prev_loc(i1, i2, 1) = EB(i1, i2, em::ex2);
+              EB_prev_loc(i1, i2, 2) = EB(i1, i2, em::ex3);
+              EB_prev_loc(i1, i2, 3) = EB(i1, i2, em::bx1);
+              EB_prev_loc(i1, i2, 4) = EB(i1, i2, em::bx2);
+              EB_prev_loc(i1, i2, 5) = EB(i1, i2, em::bx3);
             });
         }
 
@@ -412,16 +424,24 @@ namespace user {
 	    auto  i2      = species.i2;
 	    auto  dx1     = species.dx1;
 	    auto  dx2     = species.dx2;
+	    auto  i1p     = species.i1_prev;
+	    auto  i2p     = species.i2_prev;
+	    auto  dx1p    = species.dx1_prev;
+	    auto  dx2p    = species.dx2_prev;
 	    auto  mass    = species.mass();
 	    auto  charge  = species.charge();
-
-            kernels::user::InterpolateKernel<M, D, 2u> Interpolator(species.i1,
+            
+	    kernels::user::InterpolateKernel<M, D, 2u> Interpolator(species.i1,
                                                                     species.i2,
-                                                                    species.i3,
                                                                     species.dx1,
                                                                     species.dx2,
-                                                                    species.dx3,
                                                                     EB);
+
+            kernels::user::InterpolateKernel<M, D, 2u> Interpolator_prev(species.i1_prev,
+                                                                    species.i2_prev,
+                                                                    species.dx1_prev,
+                                                                    species.dx2_prev,
+                                                                    EB_prev);
             Kokkos::parallel_for(
               "InterpField",
               species.rangeActiveParticles(),
@@ -432,6 +452,10 @@ namespace user {
                 vec_t<Dim::_3D> e_interp {ZERO}, b_interp {ZERO};
 		vec_t<Dim::_3D> e0 {ZERO}, b0 {ZERO};
                 Interpolator.InterpolatedEMFields(p, e_interp, b_interp);
+                
+		vec_t<Dim::_3D> e_interp_p {ZERO}, b_interp_p {ZERO};
+		vec_t<Dim::_3D> ep {ZERO};
+                Interpolator_prev.InterpolatedEMFields(p, e_interp_p, b_interp_p);
               
 	        // Convert fields to physical unit	
 	        coord_t<D> xp_Cd {ZERO};
@@ -439,7 +463,14 @@ namespace user {
 		xp_Cd[1] = static_cast<real_t>(i2(p)) + static_cast<real_t>(dx2(p)); 
 		mesh.metric.template transform_xyz<Idx::U, Idx::XYZ>(xp_Cd, e_interp, e0);
 		mesh.metric.template transform_xyz<Idx::U, Idx::XYZ>(xp_Cd, b_interp, b0);
-                
+		xp_Cd[0] = static_cast<real_t>(i1p(p)) + static_cast<real_t>(dx1p(p)); 
+		xp_Cd[1] = static_cast<real_t>(i2p(p)) + static_cast<real_t>(dx2p(p)); 
+		mesh.metric.template transform_xyz<Idx::U, Idx::XYZ>(xp_Cd, e_interp_p, ep);
+               
+	        e0[0] = (e0[0] + ep[0]) * HALF;        
+	        e0[1] = (e0[1] + ep[1]) * HALF;        
+	        e0[2] = (e0[2] + ep[2]) * HALF;        
+
 		real_t bnorm = math::sqrt(NORM_SQR(b0[0],b0[1],b0[2]));
                 b0[0] = b0[0] / bnorm; 
                 b0[1] = b0[1] / bnorm; 
@@ -458,27 +489,20 @@ namespace user {
 		dwyperp =(u2(p) / gm) * (e0[1] - Epar * b0[1]) * COEFF;
 		dwzperp =(u3(p) / gm) * (e0[2] - Epar * b0[2]) * COEFF;
 
-		const real_t gm_prev = math::sqrt(NORM_SQR(pld_r(p,0),pld_r(p,1),pld_r(p,2))+ONE);
-		real_t dwtot = (u1(p) * e0[0]+u2(p) * e0[1]+u3(p) * e0[2]) / gm * COEFF;
-		real_t dwtot_prev = (pld_r(p,0) * e0[0]+pld_r(p,1) * e0[1]+pld_r(p,2) * e0[2]) / gm_prev * COEFF;
+		// const real_t gm_prev = math::sqrt(NORM_SQR(pld_r(p,0),pld_r(p,1),pld_r(p,2))+ONE);
+   		// real_t dwtot = (u1(p) * e0[0]+u2(p) * e0[1]+u3(p) * e0[2]) / gm * COEFF;
+		// real_t dwtot_eprev = (u1(p) * pld_r(p,0)+u2(p) * pld_r(p,1)+u3(p) * pld_r(p,2)) / gm * COEFF;
                 // real_t dwpar  = dwxpar + dwypar + dwzpar;
                 // real_t dwperp = dwxperp + dwyperp + dwzperp;
                 // real_t closure = dwtot - dwpar - dwperp;
 		
-		// pld_r(p, 0) += math::isfinite(dwxpar) ? dwxpar:ZERO;
-                // pld_r(p, 1) += math::isfinite(dwypar) ? dwypar:ZERO;
-                // pld_r(p, 2) += math::isfinite(dwzpar) ? dwzpar:ZERO;
-                // pld_r(p, 3) += math::isfinite(dwxperp) ? dwxperp:ZERO;
-                // pld_r(p, 4) += math::isfinite(dwyperp) ? dwyperp:ZERO;
-                // pld_r(p, 5) += math::isfinite(dwzperp) ? dwzperp:ZERO;
+		pld_r(p, 0) += math::isfinite(dwxpar) ? dwxpar:ZERO;
+                pld_r(p, 1) += math::isfinite(dwypar) ? dwypar:ZERO;
+                pld_r(p, 2) += math::isfinite(dwzpar) ? dwzpar:ZERO;
+                pld_r(p, 3) += math::isfinite(dwxperp) ? dwxperp:ZERO;
+                pld_r(p, 4) += math::isfinite(dwyperp) ? dwyperp:ZERO;
+                pld_r(p, 5) += math::isfinite(dwzperp) ? dwzperp:ZERO;
 
-
-		pld_r(p, 0) = u1(p);
-                pld_r(p, 1) = u2(p);
-                pld_r(p, 2) = u3(p);
-                pld_r(p, 3) += dwtot;
-                pld_r(p, 4) += (dwtot_prev + dwtot) * HALF;
-                pld_r(p, 5) += gm-gm_prev;
 
 	        // pld_r(p, 0) += math::isfinite(dwpar)   ? dwpar   : ZERO;
                 // pld_r(p, 1) += math::isfinite(dwperp)  ? dwperp  : ZERO;
@@ -490,6 +514,20 @@ namespace user {
               });
           }
         }
+      
+      auto EB_prev_loc = EB_prev;
+      Kokkos::parallel_for(
+            "FillEBPrev",
+            domain.mesh.rangeActiveCells(),
+            Lambda(cellidx_t i1, cellidx_t i2) {
+              EB_prev_loc(i1, i2, 0) = EB(i1, i2, em::ex1);
+              EB_prev_loc(i1, i2, 1) = EB(i1, i2, em::ex2);
+              EB_prev_loc(i1, i2, 2) = EB(i1, i2, em::ex3);
+              EB_prev_loc(i1, i2, 3) = EB(i1, i2, em::bx1);
+              EB_prev_loc(i1, i2, 4) = EB(i1, i2, em::bx2);
+              EB_prev_loc(i1, i2, 5) = EB(i1, i2, em::bx3);
+            });
+      
       }
 
  

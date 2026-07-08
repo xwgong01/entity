@@ -23,24 +23,20 @@ namespace kernels::user {
   struct InterpolateKernel{ 
   
       private:
-	 array_t<int*>      i1, i2, i3;
-	 array_t<prtldx_t*> dx1, dx2, dx3;
+	 array_t<int*>      i1, i2;
+	 array_t<prtldx_t*> dx1, dx2;
          ndfield_t<D, 6> EB;  
   
       public: 
       InterpolateKernel(array_t<int*>      i1,
 		      array_t<int*>        i2,
-		      array_t<int*>        i3,
 		      array_t<prtldx_t*>   dx1,
 		      array_t<prtldx_t*>   dx2,
-		      array_t<prtldx_t*>   dx3,
 		      ndfield_t<D, 6> EB):
 	  i1 {i1},
 	  i2 {i2},
-	  i3 {i3},
 	  dx1 {dx1},
 	  dx2 {dx2},
-	  dx3 {dx3},
   	  EB {EB} {}	
       
       Inline void InterpolatedEMFields(prtlidx_t          p,
