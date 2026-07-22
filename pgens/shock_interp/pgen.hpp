@@ -98,7 +98,8 @@ namespace user {
     real_t        thermal_bath_offset, thermal_bath_width;
     InitFields<D> init_flds;
     npart_t       stride;
-    real_t        x_track, x_track_offset;
+    std::vector<real_t> x_track;
+    real_t        x_track_offset;
     real_t        avg_coeff;
     ncells_t      i1_out_low, i1_out_up, i2_out_low, i2_out_up;
     bool          random_track;
@@ -133,7 +134,7 @@ namespace user {
                                                     20.0) }
       , dt { p.template get<real_t>("algorithms.timestep.dt") }
       , stride { p.template get<npart_t>("output.particles.stride", 2) }
-      , x_track { p.template get<real_t>("setup.x_track",0.0) }
+      , x_track { p.template get<std::vector<real_t>>("setup.x_track",{ZERO}) }
       , x_track_offset { p.template get<real_t>("setup.x_track_offset",0.0) }
       , tracked { p.template get<bool>("setup.tracked", false) }
       , random_track { p.template get<bool>("setup.random_track", true) }
@@ -630,7 +631,7 @@ namespace user {
                     auto  dx1     = species.dx1;
                     auto& mesh = domain.mesh;
                     auto  x_track_min = x_track;
-                    auto x_track_max = x_track + x_track_offset;
+                    auto xtrackoffset = x_track_offset;
                     const auto stride_dev = stride;
                 
                         Kokkos::parallel_for(
@@ -639,15 +640,16 @@ namespace user {
                             Lambda(prtlidx_t p) {
                               const auto x_Cd = static_cast<real_t>(i1(p)) + static_cast<real_t>(dx1(p));
                               const auto x_Ph = mesh.metric.template convert<1, Crd::Cd, Crd::XYZ>(x_Cd);
-                              if ((x_Ph < x_track_max) && (x_Ph > x_track_min)){ // prtl is in the box
-                                  // track prtl
-                                  pld_i(p, pldi::spcCtr) = (npart_t)((npart_t)(pld_i(p, pldi::spcCtr) / stride_dev) * stride_dev);
-                              } 
-                              else {
-                                  // if it is tracked, untrack
-                                  if (pld_i(p, pldi::spcCtr) % stride_dev == 0){
-                                      pld_i(p, pldi::spcCtr) += 1;                                
-                                  }
+                              // untrack
+                              if (pld_i(p, pldi::spcCtr) % stride_dev == 0){
+                                  pld_i(p, pldi::spcCtr) += 1;      
+                              }
+                            
+                              for (auto xtrackmin : x_track_min){
+                                  if ((x_Ph < xtrackmin + xtrackoffset) && (x_Ph > xtrackmin)){ // prtl is in the box
+                                      // track prtl
+                                      pld_i(p, pldi::spcCtr) = (npart_t)((npart_t)(pld_i(p, pldi::spcCtr) / stride_dev) * stride_dev);
+                                  } 
                               }
                               return; 
                             }
